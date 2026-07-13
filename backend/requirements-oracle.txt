@@ -15,4 +15,4 @@
 # init_oracle_client / call_timeout) is stable across 2.x–3.x. Not installed in
 # the image or exercised in CI — verify against a live Oracle instance before
 # production. Raise this cap only once all Oracle Clients are 19c+.
-oracledb>=2.4.0,<4
+oracledb>=4.0.1,<5
