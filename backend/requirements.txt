@@ -2,7 +2,7 @@
 # fastapi 0.138.x drops Starlette's upper bound, letting us pull a Starlette
 # release with no open advisories (CVE remediation — see requirements.lock).
 fastapi==0.141.1
-uvicorn[standard]==0.52.3
+uvicorn[standard]==0.52.4
 
 # Configuration
 pydantic-settings==2.15.0
@@ -39,5 +39,5 @@ pytest-asyncio==1.4.0
 pytest-cov==7.1.0
 
 # Linting and type checking
-ruff==0.16.3
-mypy==2.3.0
+ruff==0.16.4
+mypy==2.3.1
