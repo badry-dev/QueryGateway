@@ -35,3 +35,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Kilo agent tooling (local session state, node_modules, plans)
+.kilo/
