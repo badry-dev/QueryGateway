@@ -201,9 +201,7 @@ Update `CORS_ORIGINS` to the final HTTPS origin.
 
 ## Production Compose Strategy
 
-Create a production override file rather than editing the development Compose file for the temporary deployment.
-
-Recommended file:
+Use the committed production override file rather than editing the development Compose file for the temporary deployment:
 
 ```text
 compose.production.yml
@@ -215,57 +213,25 @@ Purpose:
 - Remove public backend and database ports.
 - Replace development database credentials.
 - Configure production CORS.
+- Override the PostgreSQL healthcheck to use the production database and user.
 - Optionally configure logging.
 - Optionally profile-gate the local database if an external database is used later.
 
-Example starting point:
-
-```yaml
-services:
-  db:
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB?POSTGRES_DB is required}
-      POSTGRES_USER: ${POSTGRES_USER?POSTGRES_USER is required}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD?POSTGRES_PASSWORD is required}
-    ports: []
-    volumes:
-      - db_data:/var/lib/postgresql/data
-
-  api:
-    environment:
-      DATABASE_URL: ${DATABASE_URL?DATABASE_URL is required}
-      APP_ENV: production
-      DEBUG: "false"
-      LOG_LEVEL: INFO
-      CORS_ORIGINS: ${CORS_ORIGINS?CORS_ORIGINS is required}
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY?JWT_SECRET_KEY is required}
-      JWT_ALGORITHM: HS256
-      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
-      QUERY_TIMEOUT_SECONDS: "30"
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY?ENCRYPTION_KEY is required}
-      ADMIN_USERNAME: ${ADMIN_USERNAME?ADMIN_USERNAME is required}
-      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH?ADMIN_PASSWORD_HASH is required}
-      ORACLE_CLIENT_LIB_DIR: ${ORACLE_CLIENT_LIB_DIR:-}
-    ports: []
-
-  web:
-    ports:
-      - "80:80"
-```
+The current template keeps `api`, `db`, and optional `oracle` off host ports. Only `web` is published, controlled by `PUBLIC_HTTP_PORT` in `.env`.
 
 If TLS is terminated directly by a container, extend the `web` or proxy service to publish `443:443`.
 
 ## Production Environment File
 
-Create `.env` on the WSL host:
+Create `.env` on the WSL host from the committed production sample:
 
 ```bash
 cd /opt/querygateway
-cp .env.example .env
+cp .env.production.example .env
 chmod 600 .env
 ```
 
-Minimum production values:
+Replace every placeholder before starting containers. Minimum production values:
 
 ```env
 POSTGRES_DB=querygateway
@@ -290,6 +256,8 @@ ADMIN_PASSWORD_HASH=replace-with-bcrypt-hash
 
 QUERY_TIMEOUT_SECONDS=30
 ORACLE_CLIENT_LIB_DIR=
+
+PUBLIC_HTTP_PORT=80
 ```
 
 Generate secrets inside WSL:
@@ -356,9 +324,28 @@ git status
 git pull --ff-only
 ```
 
-### 3. Create Production Override
+### 3. Prepare Production Environment
 
-Create `compose.production.yml` from the production Compose strategy above.
+The production override is committed as `compose.production.yml`. Do not edit the development defaults in `docker-compose.yml` for this deployment.
+
+Create the server-only `.env` file from the production sample:
+
+```bash
+cd /opt/querygateway
+cp .env.production.example .env
+chmod 600 .env
+```
+
+Edit `.env` and replace every placeholder with production values:
+
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `CORS_ORIGINS`
+- `JWT_SECRET_KEY`
+- `ENCRYPTION_KEY`
+- `ADMIN_PASSWORD_HASH`
+- `ORACLE_CLIENT_LIB_DIR`, only if Oracle thick mode is required
+- `PUBLIC_HTTP_PORT`, if not using host port `80`
 
 Before continuing, validate the merged Compose config:
 
@@ -385,10 +372,12 @@ Wait until the database is healthy.
 
 ### 6. Run Alembic Migrations
 
-Migrations are required before serving production traffic:
+Migrations are required before serving production traffic. The current Compose file includes a one-shot `migrate` service and `api` waits for it to complete during `up`.
+
+For a controlled preflight migration before starting the API, run:
 
 ```bash
-docker compose -f docker-compose.yml -f compose.production.yml run --rm api alembic upgrade head
+docker compose -f docker-compose.yml -f compose.production.yml up --build --force-recreate migrate
 ```
 
 ### 7. Start Application
@@ -571,36 +560,36 @@ Recommended improvement:
 
 ## Project-Specific Production Gaps To Fix Before Go-Live
 
-### 1. Add `compose.production.yml`
+### 1. Review Production Templates
 
-Current gap:
+Current status:
 
-- `docker-compose.yml` publishes `api:8000` and `db:5432`.
-- It uses development database credentials.
-- It sets `APP_ENV=development`.
-- It sets localhost CORS origins.
+- `compose.production.yml` is committed for the temporary WSL deployment.
+- `.env.production.example` is committed as the production server template.
+- The base `docker-compose.yml` still contains development defaults.
 
 Go-live requirement:
 
-- Add a production override file for the temporary WSL deployment.
-- Keep `api` and `db` private.
-- Set production environment values.
-- Use real secrets.
-- Keep the override easy to remove or fold into permanent docs later.
+- Use `docker-compose.yml` plus `compose.production.yml` together.
+- Copy `.env.production.example` to `.env` on the server.
+- Replace every placeholder in `.env`.
+- Validate that the merged config keeps `api`, `db`, and optional `oracle` private.
+- Keep the templates easy to remove or fold into permanent docs later.
 
-### 2. Run Migrations Explicitly
+### 2. Confirm Migrations Run
 
-Current gap:
+Current behavior:
 
-- Compose startup does not automatically run Alembic.
+- `docker-compose.yml` includes a one-shot `migrate` service.
+- `api` depends on `migrate` completing successfully.
 
 Go-live requirement:
 
 ```bash
-docker compose -f docker-compose.yml -f compose.production.yml run --rm api alembic upgrade head
+docker compose -f docker-compose.yml -f compose.production.yml up --build --force-recreate migrate
 ```
 
-Run this before starting the new app version.
+Run this before starting the new app version if you want an explicit migration gate. Otherwise confirm the `migrate` service succeeds during `docker compose up -d`.
 
 ### 3. Replace Development PostgreSQL Credentials
 
@@ -738,8 +727,8 @@ Then remove this temporary document.
 - [ ] Repo deployed under WSL Linux path, for example `/opt/querygateway`.
 - [ ] Docker Engine runs inside WSL.
 - [ ] `docker compose version` verified inside WSL.
-- [ ] Production `.env` created on server and not committed.
-- [ ] `compose.production.yml` created.
+- [ ] Production `.env` created from `.env.production.example` on server and not committed.
+- [ ] `compose.production.yml` present from the repo and reviewed.
 - [ ] Merged Compose config validated.
 - [ ] Production DB credentials set.
 - [ ] `JWT_SECRET_KEY` generated.
@@ -786,7 +775,9 @@ After the deployment is complete:
 
 - QueryGateway repo files:
   - `README.md`
+  - `.env.production.example`
   - `docker-compose.yml`
+  - `compose.production.yml`
   - `docker/Dockerfile.backend`
   - `docker/Dockerfile.frontend`
   - `docker/nginx.conf`
