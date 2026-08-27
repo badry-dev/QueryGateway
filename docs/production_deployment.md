@@ -255,7 +255,7 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD_HASH=replace-with-bcrypt-hash
 
 QUERY_TIMEOUT_SECONDS=30
-ORACLE_CLIENT_LIB_DIR=
+ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_32
 
 PUBLIC_HTTP_PORT=80
 ```
@@ -344,7 +344,8 @@ Edit `.env` and replace every placeholder with production values:
 - `JWT_SECRET_KEY`
 - `ENCRYPTION_KEY`
 - `ADMIN_PASSWORD_HASH`
-- `ORACLE_CLIENT_LIB_DIR`, only if Oracle thick mode is required
+- `ORACLE_CLIENT_LIB_DIR`; use `/opt/oracle/instantclient_19_32` for thick mode
+  with the client bundled in the backend image, or leave it blank for thin mode
 - `PUBLIC_HTTP_PORT`, if not using host port `80`
 
 Before continuing, validate the merged Compose config:
@@ -676,7 +677,10 @@ Go-live requirement:
 - Test the Oracle connection from QueryGateway running inside WSL containers.
 - Confirm outbound firewall/security group rules allow Oracle listener access.
 - Confirm whether thin mode works.
-- If thick mode is required, install Oracle Instant Client support and set `ORACLE_CLIENT_LIB_DIR`.
+- If thick mode is required, set
+  `ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_32`. The backend image
+  downloads the pinned Linux x86-64 Instant Client from Oracle and verifies its
+  published SHA-256 during the build.
 
 ### 10. Keep One API Replica Initially
 

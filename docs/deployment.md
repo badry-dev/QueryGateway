@@ -55,6 +55,12 @@ curl http://localhost/api/v1/admin/health/live
 curl http://localhost  # Frontend
 ```
 
+For Oracle thick mode, set
+`ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_32` in `.env`. The backend
+image contains the pinned Linux x86-64 Instant Client and validates that its
+native libraries load during the image build. Leave the variable blank for
+thin mode.
+
 **Services started:**
 - `migrate` — one-shot Alembic migration runner
 - `api` — FastAPI backend on the private Docker network

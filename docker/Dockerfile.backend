@@ -4,18 +4,46 @@
 #   docker buildx imagetools inspect python:3.14-slim --format '{{.Manifest.Digest}}'
 FROM python:3.14-slim@sha256:b877e50bd90de10af8d82c57a022fc2e0dc731c5320d762a27986facfc3355c1 AS base
 
+ARG TARGETARCH
+ARG ORACLE_INSTANT_CLIENT_VERSION=19.32.0.0.0dbru
+ARG ORACLE_INSTANT_CLIENT_URL=https://download.oracle.com/otn_software/linux/instantclient/1932000/instantclient-basic-linux.x64-19.32.0.0.0dbru.zip
+ARG ORACLE_INSTANT_CLIENT_SHA256=1749ca1eb5f75b038f2b7ce0abc42eb4575928159259fc4fc851c54a8ca7b002
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    ORACLE_INSTANT_CLIENT_DIR=/opt/oracle/instantclient_19_32
 
 WORKDIR /app
 
-# Install system dependencies required for psycopg2, bcrypt, and healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies required for psycopg2, bcrypt, healthcheck, and
+# the Oracle Instant Client. The client ZIP and SHA-256 are version-pinned so
+# rebuilding the image cannot silently pull different native libraries.
+# Debian 13 renamed the libaio SONAME during its time64 transition. On amd64
+# the ABI is unchanged, but Oracle Client 19 still requests libaio.so.1, so the
+# install also provides that compatibility name explicitly.
+RUN test "$TARGETARCH" = "amd64" || \
+        (echo "Oracle Instant Client bundle requires linux/amd64; got $TARGETARCH" >&2 && exit 1); \
+    apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     curl \
+    libaio1t64 \
+    unzip \
+    && curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+        "$ORACLE_INSTANT_CLIENT_URL" \
+        --output "/tmp/instantclient-${ORACLE_INSTANT_CLIENT_VERSION}.zip" \
+    && echo "$ORACLE_INSTANT_CLIENT_SHA256  /tmp/instantclient-${ORACLE_INSTANT_CLIENT_VERSION}.zip" \
+        | sha256sum --check --strict \
+    && mkdir -p /opt/oracle \
+    && unzip -q "/tmp/instantclient-${ORACLE_INSTANT_CLIENT_VERSION}.zip" -d /opt/oracle \
+    && test -f "$ORACLE_INSTANT_CLIENT_DIR/libclntsh.so.19.1" \
+    && ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
+        /usr/lib/x86_64-linux-gnu/libaio.so.1 \
+    && echo "$ORACLE_INSTANT_CLIENT_DIR" > /etc/ld.so.conf.d/oracle-instantclient.conf \
+    && ldconfig \
+    && rm -f "/tmp/instantclient-${ORACLE_INSTANT_CLIENT_VERSION}.zip" \
     && rm -rf /var/lib/apt/lists/*
 
 # Install core Python dependencies from the hash-pinned lockfile.
@@ -25,9 +53,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `uv pip compile --generate-hashes` and committed alongside it.
 COPY backend/requirements.txt backend/requirements.lock backend/requirements-oracle.txt ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
-# Oracle driver is optional — best-effort; app still starts without it.
-RUN pip install --no-cache-dir -r requirements-oracle.txt || \
-    echo "WARNING: python-oracledb not available; Oracle connectivity tests will fail at runtime."
+# Oracle connectivity is a core image capability; fail rather than publish an
+# image that starts successfully but cannot service Oracle requests.
+RUN pip install --no-cache-dir -r requirements-oracle.txt
+
+# Fail the image build if the native client or one of its shared-library
+# dependencies cannot be loaded. No database connection is made here.
+RUN python -c "import oracledb; oracledb.init_oracle_client(); assert not oracledb.is_thin_mode()"
 
 # Copy application code
 COPY backend/ .

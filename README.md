@@ -72,7 +72,7 @@ QueryGateway is organized into five admin modules, all driven from the React adm
 
 | Module | What it does |
 |--------|--------------|
-| **Connections** | Create, edit, test, and delete Oracle database connections. Credentials are encrypted at rest; pool sizing and timeouts are configurable. Uses `python-oracledb` (thin mode by default). |
+| **Connections** | Create, edit, test, and delete Oracle database connections. Credentials are encrypted at rest; pool sizing and timeouts are configurable. Uses `python-oracledb`; thin mode needs no native client, while the backend Docker image includes Oracle Instant Client 19.32 for thick mode. |
 | **API Creation Wizard** | A multi-step wizard that turns a parameterized SQL query into a deployable GET endpoint: pick a connection, author SQL with a rich editor, preview sample rows and inferred schema, map/rename output columns, attach an auth method, and select a data strategy. |
 | **Authentication** | Manage per-endpoint auth methods — Bearer token (JWT), Basic Auth, and API key. Tokens are issued/verified with `PyJWT`; credentials are hashed with `bcrypt`. When an auth method is attached to an endpoint, middleware enforces it on every request; endpoints with no auth method attached are served publicly. |
 | **Scheduling & Snapshots** | Schedule query refreshes with the in-process APScheduler (cron or interval). Run now, pause/resume, and enable/disable jobs. Results are cached as PostgreSQL JSONB snapshots and served with freshness metadata. Schedule definitions are persisted in the app database; the active APScheduler jobs run in-memory and are (re)registered when a schedule is created, updated, or resumed. |
@@ -117,6 +117,12 @@ make docker-up
 ```
 
 `make docker-up` runs the one-shot `migrate` service first, then starts the API and web containers after PostgreSQL is healthy and Alembic is at `head`.
+
+The backend image downloads Oracle Instant Client 19.32 Basic from Oracle's
+versioned HTTPS URL, verifies Oracle's published SHA-256, and registers it with
+the Linux dynamic linker. Set
+`ORACLE_CLIENT_LIB_DIR=/opt/oracle/instantclient_19_32` in `.env` to initialize
+`python-oracledb` thick mode when the API starts; leave it blank for thin mode.
 
 - Frontend SPA: `http://localhost`
 - API through nginx: `http://localhost/api/v1/...`
@@ -271,7 +277,7 @@ Contributions are welcome — whether that's code, docs, bug reports, or ideas.
 | Backend | Python 3.14+, FastAPI, SQLAlchemy 2.0, Alembic, APScheduler 3.x, PyJWT, bcrypt, structlog |
 | Frontend | Vite 6, React 18, TypeScript, shadcn/ui, Tailwind CSS 3, Vitest |
 | App DB | PostgreSQL 16 (asyncpg) |
-| Data Source | Oracle (python-oracledb thin mode) |
+| Data Source | Oracle (`python-oracledb` thin or thick mode; Docker includes Instant Client 19.32) |
 | CI/CD | GitHub Actions — backend (ruff/mypy/pytest), frontend (eslint/prettier/vitest), Docker build |
 
 ## License

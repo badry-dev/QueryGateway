@@ -15,6 +15,9 @@ x-api-environment: &api-environment
   ENCRYPTION_KEY: ${ENCRYPTION_KEY?ENCRYPTION_KEY is required}
   ADMIN_USERNAME: ${ADMIN_USERNAME?ADMIN_USERNAME is required}
   ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH?ADMIN_PASSWORD_HASH is required}
+  # Leave blank for thin mode. For thick mode, the bundled Linux client lives
+  # at /opt/oracle/instantclient_19_32.
+  ORACLE_CLIENT_LIB_DIR: ${ORACLE_CLIENT_LIB_DIR:-}
 
 services:
   db:

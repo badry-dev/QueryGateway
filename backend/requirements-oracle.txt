@@ -1,18 +1,12 @@
-# Optional Oracle driver — install this file in addition to requirements.txt
-# when Oracle connectivity is needed (production or Oracle-profile docker compose).
+# Oracle driver — install this file in addition to requirements.txt when
+# running the backend outside its Docker image. The Dockerfile installs it and
+# validates thick-mode initialization during the image build.
 #
 # Installation:
 #   pip install -r requirements.txt -r requirements-oracle.txt
 #
-# Not included in the base image to avoid build failures in environments where
-# the package is unavailable; python-oracledb is imported lazily at runtime.
-# Capped below 4.x on purpose: python-oracledb 4.0 dropped thick-mode support
-# for Oracle Client libraries older than 19c. This app supports thick mode
-# (app.main._init_oracle_client / ConnectionService calls init_oracle_client),
-# so a 4.x floor would break deployments pointing ORACLE_CLIENT_LIB_DIR at an
-# 11g/12c/18c Instant Client. No CVE requires 4.x, so the cap costs nothing on
-# currency. The high-level API this app uses (connect / cursor / execute /
-# init_oracle_client / call_timeout) is stable across 2.x–3.x. Not installed in
-# the image or exercised in CI — verify against a live Oracle instance before
-# production. Raise this cap only once all Oracle Clients are 19c+.
+# python-oracledb 4.x requires Oracle Client 19 or newer for thick mode. The
+# Docker image therefore bundles Instant Client 19.32, which can connect to
+# Oracle Database 11.2 and newer. The high-level API used here (connect,
+# cursor, execute, init_oracle_client, and call_timeout) is stable in 4.x.
 oracledb>=4.0.2,<5
