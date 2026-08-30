@@ -86,7 +86,7 @@ pip install -r requirements.txt
 alembic upgrade head
 
 # Start the server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 For production, use a process manager:
@@ -96,11 +96,13 @@ For production, use a process manager:
 pip install gunicorn
 gunicorn app.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
-  --workers 4 \
+  --workers 1 \
   --bind 0.0.0.0:8000 \
   --access-logfile - \
   --error-logfile -
 ```
+
+Keep exactly one API worker while APScheduler uses its in-process job store. Each worker restores active schedules during startup, so multiple workers or replicas would execute duplicate snapshot refreshes until distributed scheduler coordination is implemented.
 
 #### Frontend Setup
 
@@ -156,7 +158,7 @@ psql -c "CREATE DATABASE db2api_db OWNER db2api_user;"
 
 Use the Docker images as a starting point. Key considerations:
 
-- Deploy the API as a `Deployment` with `replicas: 2+`
+- Deploy the API as a `Deployment` with `replicas: 1` while the scheduler is in-process
 - Use a `Service` for internal routing and an `Ingress` for external access
 - PostgreSQL: use a managed service (e.g., AWS RDS, GCP Cloud SQL) or a StatefulSet
 - Store `ENCRYPTION_KEY` and `DATABASE_URL` as Kubernetes Secrets

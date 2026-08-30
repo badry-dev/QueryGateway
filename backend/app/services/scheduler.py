@@ -6,8 +6,8 @@ Responsibilities:
 - Persist job runs and snapshots.
 - Update schedule metadata (last_run_at, next_run_at).
 
-The scheduler currently relies on APScheduler's in-memory job store;
-scheduled jobs themselves do not persist across process restarts.
+The scheduler uses APScheduler's in-memory job store. Active schedules are
+rehydrated from the application database whenever the process starts.
 """
 
 import uuid
@@ -207,7 +207,32 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             )
 
 
-def start_scheduler() -> None:
+async def restore_active_schedules() -> int:
+    """Register all active database schedules in the in-memory scheduler."""
+    restored = 0
+    async with AsyncSessionLocal() as db:
+        schedules = await ScheduleRepository(db).get_all(active_only=True)
+        for schedule in schedules:
+            try:
+                add_schedule_job(
+                    schedule_id=schedule.id,
+                    endpoint_id=schedule.endpoint_id,
+                    schedule_type=schedule.schedule_type,
+                    cron_expression=schedule.cron_expression,
+                    interval_seconds=schedule.interval_seconds,
+                )
+                restored += 1
+            except Exception as exc:  # noqa: BLE001
+                log.error(
+                    "scheduler_job_restore_failed",
+                    schedule_id=str(schedule.id),
+                    error=str(exc),
+                )
+    log.info("scheduler_jobs_restored", restored_count=restored)
+    return restored
+
+
+async def start_scheduler() -> None:
     """Initialize and start the APScheduler instance."""
     global _scheduler  # noqa: PLW0603
 
@@ -224,6 +249,7 @@ def start_scheduler() -> None:
         scheduler.start()
         _scheduler = scheduler
         log.info("scheduler_started")
+        await restore_active_schedules()
     except Exception as exc:  # noqa: BLE001
         log.error("scheduler_start_failed", error=str(exc))
 
