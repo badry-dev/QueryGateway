@@ -67,6 +67,32 @@ def test_schedule_create_invalid_cron_fields() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "cron_expression",
+    [
+        "invalid invalid invalid invalid invalid",
+        "60 * * * *",
+        "0 24 * * *",
+        "0 0 32 * *",
+        "0 0 * 13 *",
+        "0 0 * * 7",
+        "*/0 * * * *",
+    ],
+)
+def test_schedule_create_rejects_invalid_cron_syntax(cron_expression: str) -> None:
+    with pytest.raises(ValueError, match="Invalid cron expression"):
+        ScheduleCreate(
+            endpoint_id=uuid.uuid4(),
+            schedule_type="cron",
+            cron_expression=cron_expression,
+        )
+
+
+def test_schedule_update_rejects_invalid_cron_syntax() -> None:
+    with pytest.raises(ValueError, match="Invalid cron expression"):
+        ScheduleUpdate(cron_expression="60 * * * *")
+
+
 def test_schedule_create_interval_minimum() -> None:
     with pytest.raises(ValueError):
         ScheduleCreate(

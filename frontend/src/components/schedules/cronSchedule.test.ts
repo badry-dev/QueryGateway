@@ -45,6 +45,27 @@ describe("cron schedule builder", () => {
     expect(isValidCronExpression("0 */6 * *")).toBe(false);
   });
 
+  it.each([
+    "invalid invalid invalid invalid invalid",
+    "60 * * * *",
+    "0 24 * * *",
+    "0 0 0 * *",
+    "0 0 32 * *",
+    "0 0 * 13 *",
+    "0 0 * * 7",
+    "*/0 * * * *",
+    "10-5 * * * *",
+  ])("rejects malformed or out-of-range expression %s", (expression) => {
+    expect(isValidCronExpression(expression)).toBe(false);
+  });
+
+  it.each(["0,15,30,45 * * * *", "0 9-17/2 * jan-mar mon-fri", "0 0 last * *"])(
+    "accepts APScheduler-compatible expression %s",
+    (expression) => {
+      expect(isValidCronExpression(expression)).toBe(true);
+    },
+  );
+
   it("describes generated expressions in plain language", () => {
     expect(describeCronExpression("15 * * * *")).toBe("Every hour at minute 15");
     expect(describeCronExpression("30 8 * * *")).toBe("Every day at 08:30");

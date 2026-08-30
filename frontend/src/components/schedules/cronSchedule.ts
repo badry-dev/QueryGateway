@@ -59,8 +59,86 @@ export function buildCronExpression(value: CronBuilderValue): string {
   }
 }
 
+interface CronFieldRules {
+  min: number;
+  max: number;
+  names?: Record<string, number>;
+  allowLast?: boolean;
+}
+
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1,
+  feb: 2,
+  mar: 3,
+  apr: 4,
+  may: 5,
+  jun: 6,
+  jul: 7,
+  aug: 8,
+  sep: 9,
+  oct: 10,
+  nov: 11,
+  dec: 12,
+};
+
+const WEEKDAY_NAMES: Record<string, number> = {
+  mon: 0,
+  tue: 1,
+  wed: 2,
+  thu: 3,
+  fri: 4,
+  sat: 5,
+  sun: 6,
+};
+
+const CRON_FIELD_RULES: CronFieldRules[] = [
+  { min: 0, max: 59 },
+  { min: 0, max: 23 },
+  { min: 1, max: 31, allowLast: true },
+  { min: 1, max: 12, names: MONTH_NAMES },
+  { min: 0, max: 6, names: WEEKDAY_NAMES },
+];
+
+function parseCronValue(value: string, rules: CronFieldRules): number | null {
+  const namedValue = rules.names?.[value.toLowerCase()];
+  if (namedValue !== undefined) return namedValue;
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number.parseInt(value, 10);
+  return parsed >= rules.min && parsed <= rules.max ? parsed : null;
+}
+
+function isValidCronPart(part: string, rules: CronFieldRules): boolean {
+  const stepParts = part.split("/");
+  if (stepParts.length > 2) return false;
+  const [base, step] = stepParts;
+  if (step !== undefined) {
+    if (!/^\d+$/.test(step)) return false;
+    const parsedStep = Number.parseInt(step, 10);
+    if (parsedStep < 1 || parsedStep > rules.max - rules.min + 1) return false;
+  }
+
+  if (base === "*") return true;
+  if (rules.allowLast && base.toLowerCase() === "last" && step === undefined) return true;
+
+  const range = base.split("-");
+  if (range.length === 1) return parseCronValue(base, rules) !== null;
+  if (range.length !== 2) return false;
+  const start = parseCronValue(range[0], rules);
+  const end = parseCronValue(range[1], rules);
+  return start !== null && end !== null && start <= end;
+}
+
+function isValidCronField(field: string, rules: CronFieldRules): boolean {
+  const parts = field.split(",");
+  return parts.length > 0 && parts.every((part) => part.length > 0 && isValidCronPart(part, rules));
+}
+
 export function isValidCronExpression(expression: string): boolean {
-  return expression.trim().split(/\s+/).length === 5;
+  const fields = expression.trim().split(/\s+/);
+  return (
+    fields.length === CRON_FIELD_RULES.length &&
+    fields.every((field, index) => isValidCronField(field, CRON_FIELD_RULES[index]))
+  );
 }
 
 function formatTime(hour: string, minute: string): string {
