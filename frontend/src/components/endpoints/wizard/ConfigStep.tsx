@@ -7,7 +7,6 @@ import type { AuthMethod } from "@/types/auth_method";
 import type { DataStrategy } from "@/types/endpoint";
 
 import type { WizardState, WizardUpdate } from "./types";
-import { missingSnapshotDefaults } from "./parameterDefaults";
 
 interface ConfigStepProps {
   state: WizardState;
@@ -16,8 +15,6 @@ interface ConfigStepProps {
 }
 
 export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
-  const missingDefaults = missingSnapshotDefaults(state.param_schema);
-
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Endpoint Configuration</h3>
@@ -94,13 +91,12 @@ export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
         </div>
       </div>
 
-      {state.data_strategy === "snapshot" && missingDefaults.length > 0 && (
-        <Alert variant="destructive">
-          <AlertTitle>Snapshot defaults required</AlertTitle>
+      {state.data_strategy === "snapshot" && (
+        <Alert>
+          <AlertTitle>Scheduled values are configured with the schedule</AlertTitle>
           <AlertDescription>
-            Add a fixed, dynamic, or NULL default for{" "}
-            {missingDefaults.map((name) => `:${name}`).join(", ")} in the Parameters step. Scheduled
-            snapshots have no request values to bind.
+            After publishing this endpoint, create its schedule and choose a fixed value, SQL NULL,
+            logical run date, relative date, or calendar window for every SQL parameter.
           </AlertDescription>
         </Alert>
       )}

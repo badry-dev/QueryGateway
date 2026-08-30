@@ -7,13 +7,6 @@ export function hasParameterDefault(descriptor: ParamDescriptor): boolean {
     : descriptor.default_expression === "today" || descriptor.default_expression === "yesterday";
 }
 
-export function missingSnapshotDefaults(paramSchema: Record<string, ParamDescriptor>): string[] {
-  return Object.entries(paramSchema)
-    .filter(([, descriptor]) => !hasParameterDefault(descriptor))
-    .map(([name]) => name)
-    .sort();
-}
-
 function formatLocalDate(value: Date): string {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
