@@ -384,7 +384,7 @@ async def test_delete_schedule_preserves_job_run_history(
             "host": "oracle.example.com",
             "service_name": "SVC",
             "username": "scott",
-            "password": "tiger",
+            "password": "test-password",
         },
     )
     endpoint = await client.post(
