@@ -38,6 +38,7 @@ from app.schemas.schedule import (
     SnapshotResponse,
 )
 from app.services.schedule import ScheduleService
+from app.services.scheduler import remove_schedule_job
 
 log = structlog.get_logger()
 
@@ -151,6 +152,7 @@ async def delete_schedule(
             status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found."
         )
     await db.commit()
+    remove_schedule_job(schedule_id)
 
 
 # ── Control actions ──────────────────────────────────────────────────────────

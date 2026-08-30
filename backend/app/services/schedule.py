@@ -172,9 +172,6 @@ class ScheduleService:
         if obj is None:
             return False
 
-        # Remove from APScheduler
-        remove_schedule_job(obj.id)
-
         await self._repo.delete(obj)
 
         log.info(

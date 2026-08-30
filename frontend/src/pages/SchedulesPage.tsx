@@ -53,6 +53,7 @@ export function SchedulesPage() {
   });
   const [cronBuilder, setCronBuilder] = useState<CronBuilderValue>(INITIAL_CRON_BUILDER);
   const [createError, setCreateError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
 
   const {
     data: schedules = [],
@@ -93,7 +94,9 @@ export function SchedulesPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.schedules.all });
       setDeleteSchedule(null);
+      setDeleteError("");
     },
+    onError: (err) => setDeleteError(getApiError(err)),
   });
 
   const runNowMutation = useMutation({
@@ -246,7 +249,14 @@ export function SchedulesPage() {
                         >
                           <RefreshCw className="h-3.5 w-3.5" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setDeleteSchedule(s)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setDeleteError("");
+                            setDeleteSchedule(s);
+                          }}
+                        >
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </Button>
                       </div>
@@ -360,7 +370,15 @@ export function SchedulesPage() {
       </Dialog>
 
       {/* Delete Dialog */}
-      <Dialog open={!!deleteSchedule} onOpenChange={() => setDeleteSchedule(null)}>
+      <Dialog
+        open={!!deleteSchedule}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteSchedule(null);
+            setDeleteError("");
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Schedule</DialogTitle>
@@ -372,6 +390,11 @@ export function SchedulesPage() {
               . Existing snapshots will be preserved.
             </DialogDescription>
           </DialogHeader>
+          {deleteError && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {deleteError}
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteSchedule(null)}>
               Cancel
