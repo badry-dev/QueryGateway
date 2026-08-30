@@ -70,7 +70,7 @@ class ScheduleResponse(BaseModel):
 class JobRunResponse(BaseModel):
     id: uuid.UUID
     schedule_id: uuid.UUID | None
-    endpoint_id: uuid.UUID
+    endpoint_id: uuid.UUID | None
     started_at: datetime
     finished_at: datetime | None
     status: str

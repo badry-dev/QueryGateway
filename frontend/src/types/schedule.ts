@@ -31,7 +31,7 @@ export interface ScheduleUpdate {
 export interface JobRun {
   id: string;
   schedule_id: string | null;
-  endpoint_id: string;
+  endpoint_id: string | null;
   started_at: string;
   finished_at: string | null;
   status: "running" | "success" | "failed" | "timeout";

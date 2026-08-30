@@ -33,8 +33,8 @@ class JobRun(UUIDPrimaryKeyMixin, Base):
     schedule_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True
     )
-    endpoint_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("endpoints.id", ondelete="RESTRICT"), nullable=False
+    endpoint_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("endpoints.id", ondelete="SET NULL"), nullable=True
     )
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

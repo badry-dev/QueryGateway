@@ -21,6 +21,7 @@ from app.auth.admin import get_current_admin
 from app.dependencies import get_db
 from app.repositories.connection import ConnectionRepository
 from app.repositories.endpoint import EndpointRepository
+from app.repositories.schedule import ScheduleRepository
 from app.schemas.endpoint import (
     EndpointCreate,
     EndpointResponse,
@@ -30,6 +31,7 @@ from app.schemas.endpoint import (
     SqlPreviewResponse,
 )
 from app.services.endpoint import EndpointService
+from app.services.scheduler import remove_schedule_job
 
 log = structlog.get_logger()
 
@@ -140,12 +142,14 @@ async def delete_endpoint(
     db: AsyncSession = Depends(get_db),
     svc: EndpointService = Depends(_service),
 ) -> None:
+    schedule = await ScheduleRepository(db).get_by_endpoint_id(endpoint_id)
+    schedule_id = schedule.id if schedule is not None else None
     deleted = await svc.delete_endpoint(endpoint_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found.")
     await db.commit()
+    if schedule_id is not None:
+        remove_schedule_job(schedule_id)
 
 
 @router.post(

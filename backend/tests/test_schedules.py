@@ -132,6 +132,22 @@ def test_job_run_response_allows_deleted_schedule_history() -> None:
     assert response.schedule_id is None
 
 
+def test_job_run_response_allows_deleted_endpoint_history() -> None:
+    now = datetime.now(UTC)
+    response = JobRunResponse(
+        id=uuid.uuid4(),
+        schedule_id=uuid.uuid4(),
+        endpoint_id=None,
+        started_at=now,
+        finished_at=now,
+        status="success",
+        row_count=1,
+        error_detail=None,
+        created_at=now,
+    )
+    assert response.endpoint_id is None
+
+
 def test_snapshot_response_fields() -> None:
     fields = SnapshotResponse.model_fields
     assert "id" in fields

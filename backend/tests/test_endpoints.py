@@ -376,6 +376,94 @@ async def test_delete_endpoint(async_client: object) -> None:
 
 
 @pytest.mark.integration
+async def test_delete_endpoint_preserves_job_history_and_removes_scheduler_job(
+    async_client: object,
+    db_session: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    from app.models.job_run import JobRun, JobRunStatus
+    from httpx import AsyncClient
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    session: AsyncSession = db_session  # type: ignore[assignment]
+
+    connection = await client.post(
+        "/api/v1/admin/connections/",
+        json={
+            "name": f"test-conn-del-history-{uuid.uuid4().hex[:8]}",
+            "host": "oracle.example.com",
+            "service_name": "SVC",
+            "username": "scott",
+            "password": "tiger",
+        },
+    )
+    assert connection.status_code == 201
+
+    endpoint = await client.post(
+        "/api/v1/admin/endpoints/",
+        json={
+            "name": f"del-history-{uuid.uuid4().hex[:8]}",
+            "path": f"del-history-path-{uuid.uuid4().hex[:8]}",
+            "connection_id": connection.json()["id"],
+            "sql_text": "SELECT 1 FROM dual",
+            "allow_unauthenticated": True,
+            "data_strategy": "snapshot",
+        },
+    )
+    assert endpoint.status_code == 201
+    endpoint_id = endpoint.json()["id"]
+
+    schedule = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "interval",
+            "interval_seconds": 300,
+        },
+    )
+    assert schedule.status_code == 201
+    schedule_id = schedule.json()["id"]
+
+    run_id = uuid.uuid4()
+    session.add(
+        JobRun(
+            id=run_id,
+            schedule_id=uuid.UUID(schedule_id),
+            endpoint_id=uuid.UUID(endpoint_id),
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+            status=JobRunStatus.success,
+            row_count=1,
+        )
+    )
+    await session.commit()
+
+    removed_jobs: list[uuid.UUID] = []
+    monkeypatch.setattr("app.routers.endpoints.remove_schedule_job", removed_jobs.append)
+
+    deleted = await client.delete(f"/api/v1/admin/endpoints/{endpoint_id}")
+    assert deleted.status_code == 204
+    assert removed_jobs == [uuid.UUID(schedule_id)]
+
+    ids = await session.execute(
+        select(JobRun.endpoint_id, JobRun.schedule_id).where(JobRun.id == run_id)
+    )
+    assert ids.one() == (None, None)
+
+    historical_run = await client.get(f"/api/v1/admin/schedules/jobs/{run_id}")
+    assert historical_run.status_code == 200
+    assert historical_run.json()["endpoint_id"] is None
+    assert historical_run.json()["schedule_id"] is None
+
+    deleted_schedule = await client.get(f"/api/v1/admin/schedules/{schedule_id}")
+    assert deleted_schedule.status_code == 404
+
+
+@pytest.mark.integration
 async def test_data_endpoint_not_found(async_client: object) -> None:
     from httpx import AsyncClient
 
