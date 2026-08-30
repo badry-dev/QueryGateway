@@ -11,6 +11,7 @@ Comprehensive negative-path testing covering:
 """
 
 import uuid
+from datetime import date
 
 import pytest
 from app.schemas.endpoint import EndpointCreate, validate_sql_safety
@@ -509,6 +510,72 @@ class TestDataEndpointParams:
         assert response.status_code == 422
         assert "business_date" in response.json()["detail"]
         assert "Field required" in response.json()["detail"]
+
+    async def test_live_date_params_accept_dd_mm_yyyy(
+        self,
+        async_client: object,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        client: AsyncClient = async_client  # type: ignore[assignment]
+        captured_params: dict[str, object] = {}
+
+        async def fake_execute_query(
+            **kwargs: object,
+        ) -> tuple[list[str], list[dict[str, object]], float]:
+            params = kwargs["params"]
+            assert isinstance(params, dict)
+            captured_params.update(params)
+            return ["ok"], [{"ok": True}], 1.0
+
+        monkeypatch.setattr("app.services.data.execute_query", fake_execute_query)
+
+        connection = await client.post(
+            "/api/v1/admin/connections/",
+            json={
+                "name": _unique("date-format-conn"),
+                "host": "oracle.example.com",
+                "service_name": "SVC",
+                "username": "hr",
+                "password": "secret",
+            },
+        )
+        assert connection.status_code == 201
+
+        ep_path = _unique("date-format-data")
+        endpoint = await client.post(
+            "/api/v1/admin/endpoints/",
+            json={
+                "name": _unique("date-format-ep"),
+                "path": ep_path,
+                "connection_id": connection.json()["id"],
+                "allow_unauthenticated": True,
+                "sql_text": (
+                    "SELECT * FROM t WHERE business_date BETWEEN :start_date AND :end_date"
+                ),
+                "param_schema": {
+                    "start_date": {
+                        "type": "date",
+                        "required": True,
+                        "default_expression": "yesterday",
+                    },
+                    "end_date": {
+                        "type": "date",
+                        "required": True,
+                        "default_expression": "yesterday",
+                    },
+                },
+            },
+        )
+        assert endpoint.status_code == 201
+
+        response = await client.get(
+            f"/api/v1/data/{ep_path}?start_date=08-08-2026&end_date=15-08-2026"
+        )
+        assert response.status_code == 200
+        assert captured_params == {
+            "start_date": date(2026, 8, 8),
+            "end_date": date(2026, 8, 15),
+        }
 
     async def test_invalid_param_type(self, async_client: object) -> None:
         client: AsyncClient = async_client  # type: ignore[assignment]

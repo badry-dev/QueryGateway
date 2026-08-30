@@ -14,7 +14,7 @@ The descriptor format mirrors ``app.schemas.endpoint.ParamDescriptor`` —
 "max_length": int | None}``.
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated, Any, Literal, get_args
 
 import structlog
@@ -48,6 +48,22 @@ def _coerce_bool(value: object) -> object:
         if normalized in _BOOL_FALSE:
             return False
         raise ValueError(f"expected true/false/1/0/yes/no, got '{value}'")
+    return value
+
+
+def _coerce_date(value: object) -> object:
+    """Accept the documented HTTP date formats and return a date value."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        for date_format in ("%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(value, date_format).date()
+            except ValueError:
+                continue
+        raise ValueError("expected YYYY-MM-DD or DD-MM-YYYY")
     return value
 
 
@@ -94,7 +110,7 @@ def _build_field(
     elif raw_type == "boolean":
         annotation = Annotated[bool, BeforeValidator(_coerce_bool)]  # type: ignore[assignment]
     elif raw_type == "date":
-        annotation = date
+        annotation = Annotated[date, BeforeValidator(_coerce_date)]  # type: ignore[assignment]
     else:  # "string"
         annotation = str
         if isinstance(max_length, int) and max_length >= 1:

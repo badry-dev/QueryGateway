@@ -42,8 +42,9 @@ _GOLDEN_CASES: list[tuple[dict[str, object], str, object]] = [
     ({"type": "boolean", "required": True}, "false", False),
     ({"type": "boolean", "required": True}, "0", False),
     ({"type": "boolean", "required": True}, "NO", False),
-    # date — must be ISO format
+    # date — public API accepts ISO and the Oracle-oriented DD-MM-YYYY format
     ({"type": "date", "required": True}, "2024-01-15", date(2024, 1, 15)),
+    ({"type": "date", "required": True}, "15-01-2024", date(2024, 1, 15)),
 ]
 
 _GOLDEN_FAILURES: list[tuple[dict[str, object], str]] = [
@@ -217,7 +218,7 @@ def test_build_param_model_required_value_overrides_scheduler_default() -> None:
         current_date=date(2026, 8, 30),
         enforce_required=True,
     )
-    assert Model.model_validate({"p": "2026-01-15"}).model_dump()["p"] == date(2026, 1, 15)
+    assert Model.model_validate({"p": "15-01-2026"}).model_dump()["p"] == date(2026, 1, 15)
 
 
 def test_build_param_model_explicit_null_default_binds_none() -> None:
