@@ -326,3 +326,9 @@ async def test_deleting_auth_method_default_denies_endpoint(
     assert "client_ip" in denials[0]
     assert "duration_ms" in denials[0]
     assert not any(e.get("event") == "public_endpoint_served" for e in logs)
+
+    # A valid platform-admin token must not bypass an orphaned endpoint's
+    # explicit fallback setting. The administrator must repair the endpoint
+    # configuration before data access resumes.
+    authenticated = await admin.get(f"/api/v1/data/{ep_path}")
+    assert authenticated.status_code == 401

@@ -112,6 +112,12 @@ class DataService:
         principal: str | None = None
         if endpoint.auth_method_id is not None:
             principal = await self._enforce_auth(request, endpoint.auth_method_id)
+        elif not endpoint.allow_unauthenticated:
+            self._log_platform_auth_denied(request, endpoint, started_at, path)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication configuration is unavailable.",
+            )
         else:
             principal = await self._enforce_platform_auth(request, endpoint, started_at, path)
 
@@ -145,19 +151,28 @@ class DataService:
         try:
             principal = await get_current_admin(credentials)
         except HTTPException:
-            log.warning(
-                "unauthenticated_endpoint_denied",
-                endpoint_id=str(endpoint.id),
-                endpoint=path,
-                user="anonymous",
-                status=status.HTTP_401_UNAUTHORIZED,
-                method=request.method,
-                client_ip=request.client.host if request.client else None,
-                request_id=resolve_request_id(request),
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
-            )
+            self._log_platform_auth_denied(request, endpoint, started_at, path)
             raise
         return principal.username
+
+    @staticmethod
+    def _log_platform_auth_denied(
+        request: Request,
+        endpoint: ApiEndpoint,
+        started_at: float,
+        path: str,
+    ) -> None:
+        log.warning(
+            "unauthenticated_endpoint_denied",
+            endpoint_id=str(endpoint.id),
+            endpoint=path,
+            user="anonymous",
+            status=status.HTTP_401_UNAUTHORIZED,
+            method=request.method,
+            client_ip=request.client.host if request.client else None,
+            request_id=resolve_request_id(request),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+        )
 
     # ── Endpoint lookup ─────────────────────────────────────────────────────
 
