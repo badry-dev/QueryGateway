@@ -9,6 +9,7 @@ Public contract rules:
 
 import re
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal, Self
 
@@ -130,7 +131,7 @@ class ParamDescriptor(BaseModel):
 
 
 def missing_snapshot_defaults(
-    param_schema: dict[str, ParamDescriptor] | dict[str, object],
+    param_schema: Mapping[str, object],
 ) -> list[str]:
     """Return snapshot bind names that cannot be resolved without a request."""
     missing: list[str] = []
@@ -154,7 +155,7 @@ def missing_snapshot_defaults(
 
 def require_snapshot_defaults(
     data_strategy: DataStrategy,
-    param_schema: dict[str, ParamDescriptor] | dict[str, object],
+    param_schema: Mapping[str, object],
 ) -> None:
     """Reject snapshot endpoints whose binds require caller-supplied values."""
     if data_strategy != DataStrategy.snapshot:
