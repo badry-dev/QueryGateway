@@ -22,7 +22,11 @@ import { ParamsStep } from "./wizard/ParamsStep";
 import { ReviewStep } from "./wizard/ReviewStep";
 import { SqlStep } from "./wizard/SqlStep";
 import { extractBindParams, reconcileParamSchema } from "./wizard/bindParams";
-import { missingSnapshotDefaults, updateParameterDescriptor } from "./wizard/parameterDefaults";
+import {
+  missingSnapshotDefaults,
+  resolvePreviewParameterDefault,
+  updateParameterDescriptor,
+} from "./wizard/parameterDefaults";
 import {
   INITIAL_WIZARD_STATE,
   WIZARD_STEPS,
@@ -60,12 +64,13 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
         params: Object.fromEntries(
           Object.entries(state.param_schema).map(([name, descriptor]) => {
             const previewValue = previewParams[name];
+            const resolvedDefault = resolvePreviewParameterDefault(descriptor);
             const value =
               previewValue !== undefined && previewValue.trim().length > 0
                 ? previewValue
-                : descriptor.default_is_null
-                  ? null
-                  : (descriptor.default ?? previewValue ?? "");
+                : resolvedDefault !== undefined
+                  ? resolvedDefault
+                  : "";
             return [name, value];
           }),
         ),

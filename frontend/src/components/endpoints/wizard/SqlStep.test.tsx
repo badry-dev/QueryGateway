@@ -101,4 +101,28 @@ describe("SqlStep preview parameters", () => {
 
     expect(screen.getByRole("button", { name: "Preview Query" })).toBeEnabled();
   });
+
+  it("allows preview when a date parameter has a dynamic default", () => {
+    const state = makeState();
+    state.param_schema.customer_id = {
+      type: "date",
+      required: true,
+      default: null,
+      default_expression: "today",
+    };
+
+    render(
+      <SqlStep
+        state={state}
+        update={vi.fn()}
+        preview={null}
+        previewParams={{}}
+        isPreviewing={false}
+        onPreview={vi.fn()}
+        onUpdatePreviewParam={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Preview Query" })).toBeEnabled();
+  });
 });

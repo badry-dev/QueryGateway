@@ -14,6 +14,35 @@ export function missingSnapshotDefaults(paramSchema: Record<string, ParamDescrip
     .sort();
 }
 
+function formatLocalDate(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function resolvePreviewParameterDefault(
+  descriptor: ParamDescriptor,
+  currentDate: Date = new Date(),
+): string | number | boolean | null | undefined {
+  if (descriptor.default_is_null) return null;
+  if (descriptor.default !== null && descriptor.default !== undefined) {
+    return descriptor.default;
+  }
+  if (descriptor.default_expression === "today") {
+    return formatLocalDate(currentDate);
+  }
+  if (descriptor.default_expression === "yesterday") {
+    const yesterday = new Date(
+      currentDate.getFullYear(),
+      currentDate.getMonth(),
+      currentDate.getDate() - 1,
+    );
+    return formatLocalDate(yesterday);
+  }
+  return undefined;
+}
+
 export function describeParameterDefault(descriptor: ParamDescriptor): string {
   if (descriptor.default_is_null) return "NULL";
   if (descriptor.default_expression === "today") return "Today (server date)";
