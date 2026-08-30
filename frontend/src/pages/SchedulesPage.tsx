@@ -131,6 +131,11 @@ export function SchedulesPage() {
     onError: (err) => setPreviewError(getApiError(err)),
   });
 
+  const resetPreview = () => {
+    previewMutation.reset();
+    setPreviewError("");
+  };
+
   const runNowMutation = useMutation({
     mutationFn: (id: string) => schedulesApi.runNow(id),
     onSuccess: () => {
@@ -338,8 +343,9 @@ export function SchedulesPage() {
           )}
           <div className="space-y-3">
             <div>
-              <Label>Endpoint</Label>
+              <Label htmlFor="schedule-endpoint">Endpoint</Label>
               <Select
+                id="schedule-endpoint"
                 className="mt-1"
                 value={createForm.endpoint_id}
                 onChange={(e) => {
@@ -351,8 +357,7 @@ export function SchedulesPage() {
                     parameter_bindings: suggestScheduleBindings(endpoint?.param_schema ?? {}),
                     window: undefined,
                   }));
-                  previewMutation.reset();
-                  setPreviewError("");
+                  resetPreview();
                 }}
               >
                 <option value="">Select endpoint...</option>
@@ -380,6 +385,7 @@ export function SchedulesPage() {
                     cron_expression: v === "cron" ? buildCronExpression(cronBuilder) : undefined,
                     interval_seconds: v === "interval" ? 300 : undefined,
                   }));
+                  resetPreview();
                 }}
               >
                 <option value="interval">Repeat at an interval</option>
@@ -388,18 +394,20 @@ export function SchedulesPage() {
             </div>
             {createForm.schedule_type === "interval" && (
               <div>
-                <Label>Interval (seconds)</Label>
+                <Label htmlFor="schedule-interval-seconds">Interval (seconds)</Label>
                 <Input
+                  id="schedule-interval-seconds"
                   className="mt-1"
                   type="number"
                   min={10}
                   value={createForm.interval_seconds ?? 300}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setCreateForm((f) => ({
                       ...f,
                       interval_seconds: parseInt(e.target.value, 10) || 10,
-                    }))
-                  }
+                    }));
+                    resetPreview();
+                  }}
                 />
                 <p className="mt-1 text-xs text-muted-foreground">Minimum 10 seconds.</p>
               </div>
@@ -413,6 +421,7 @@ export function SchedulesPage() {
                     ...form,
                     cron_expression: buildCronExpression(value),
                   }));
+                  resetPreview();
                 }}
               />
             )}
@@ -424,7 +433,7 @@ export function SchedulesPage() {
                 value={createForm.timezone ?? "UTC"}
                 onChange={(event) => {
                   setCreateForm((form) => ({ ...form, timezone: event.target.value }));
-                  previewMutation.reset();
+                  resetPreview();
                 }}
               >
                 {commonTimezones.map((timezone) => (
@@ -450,11 +459,11 @@ export function SchedulesPage() {
                       ? (form.window ?? { preset: "previous_day" })
                       : undefined,
                   }));
-                  previewMutation.reset();
+                  resetPreview();
                 }}
                 onWindowChange={(window) => {
                   setCreateForm((form) => ({ ...form, window }));
-                  previewMutation.reset();
+                  resetPreview();
                 }}
               />
             )}
