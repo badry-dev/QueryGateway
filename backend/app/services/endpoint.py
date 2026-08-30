@@ -11,12 +11,14 @@ Responsibilities:
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import structlog
 
-from app.models.endpoint import ApiEndpoint
+from app.models.endpoint import ApiEndpoint, DataStrategy
 from app.repositories.connection import ConnectionRepository
 from app.repositories.endpoint import EndpointRepository
+from app.repositories.schedule import ScheduleRepository
 from app.schemas.endpoint import (
     PUBLIC_OPT_IN_MESSAGE,
     EndpointCreate,
@@ -29,6 +31,7 @@ from app.schemas.endpoint import (
     SqlPreviewResponse,
     extract_bind_params,
 )
+from app.services.schedule_bindings import ScheduleBindingError, resolve_schedule_parameters
 from app.sql.executor import SqlExecutionError, execute_query
 
 log = structlog.get_logger()
@@ -75,9 +78,11 @@ class EndpointService:
         self,
         repo: EndpointRepository,
         conn_repo: ConnectionRepository | None = None,
+        schedule_repo: ScheduleRepository | None = None,
     ) -> None:
         self._repo = repo
         self._conn_repo = conn_repo
+        self._schedule_repo = schedule_repo
 
     async def list_endpoints(self, *, active_only: bool = False) -> Sequence[EndpointResponse]:
         rows = await self._repo.get_all(active_only=active_only)
@@ -190,17 +195,46 @@ class EndpointService:
             if conflict:
                 raise ValueError(f"An endpoint with path '{payload.path}' already exists.")
 
+        effective_param_schema: dict[str, object] = obj.param_schema_json or {}
+
         # Handle param_schema serialization
         if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
-            changes["param_schema_json"] = {
+            effective_param_schema = {
                 k: v.model_dump() for k, v in payload.param_schema.items()
             }
+            changes["param_schema_json"] = effective_param_schema
             changes.pop("param_schema", None)
 
         # Handle column_map serialization
         if "column_map" in payload.model_fields_set and payload.column_map is not None:
             changes["column_map_json"] = dict(payload.column_map)
             changes.pop("column_map", None)
+
+        if self._schedule_repo is not None:
+            schedule = await self._schedule_repo.get_by_endpoint_id(endpoint_id)
+            if schedule is not None:
+                effective_strategy = payload.data_strategy or obj.data_strategy
+                if effective_strategy != DataStrategy.snapshot:
+                    raise ScheduleBindingError(
+                        "Delete the attached schedule before changing this endpoint to live data."
+                    )
+
+                effective_sql = payload.sql_text or obj.sql_text
+                sql_params = set(extract_bind_params(effective_sql))
+                schema_params = set(effective_param_schema)
+                if sql_params != schema_params:
+                    raise ScheduleBindingError(
+                        "Endpoint SQL and parameter schema must continue to match while a schedule "
+                        "is attached."
+                    )
+
+                resolve_schedule_parameters(
+                    param_schema=effective_param_schema,
+                    parameter_bindings=schedule.parameter_bindings_json or {},
+                    timezone_name=schedule.timezone,
+                    scheduled_for=datetime.now(UTC),
+                    window=schedule.window_config_json,
+                )
 
         obj = await self._repo.update(obj, changes)
 

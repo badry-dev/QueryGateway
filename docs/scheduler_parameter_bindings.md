@@ -78,6 +78,10 @@ POST /api/v1/admin/schedules/{schedule_id}/run
 
 The supplied date is interpreted at midnight in the schedule timezone and is recorded with trigger source `manual`.
 
+## Endpoint changes
+
+An attached schedule and its endpoint form one validated configuration. While a schedule exists, endpoint updates must keep the endpoint in snapshot mode and preserve SQL/parameter names and types that the stored bindings can resolve. Incompatible updates return HTTP 422 without changing the endpoint. Delete or update the schedule first when intentionally changing that contract.
+
 ## Existing schedules
 
 The Alembic migration converts existing endpoint defaults into schedule-local bindings:

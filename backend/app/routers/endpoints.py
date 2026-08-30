@@ -32,6 +32,7 @@ from app.schemas.endpoint import (
     SqlPreviewResponse,
 )
 from app.services.endpoint import EndpointService
+from app.services.schedule_bindings import ScheduleBindingError
 from app.services.scheduler import remove_schedule_job
 
 log = structlog.get_logger()
@@ -47,6 +48,7 @@ def _service(db: AsyncSession = Depends(get_db)) -> EndpointService:
     return EndpointService(
         EndpointRepository(db),
         ConnectionRepository(db),
+        ScheduleRepository(db),
     )
 
 
@@ -113,7 +115,7 @@ async def update_endpoint(
 ) -> EndpointResponse:
     try:
         result = await svc.update_endpoint(endpoint_id, payload)
-    except (PublicEndpointError, SnapshotConfigurationError) as exc:
+    except (PublicEndpointError, ScheduleBindingError, SnapshotConfigurationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc

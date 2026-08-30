@@ -321,6 +321,65 @@ async def test_schedule_bindings_are_required_at_schedule_creation(
 
 
 @pytest.mark.integration
+async def test_endpoint_update_cannot_invalidate_attached_schedule(
+    async_client: object,
+) -> None:
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+    created = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "relative_date", "offset_days": -7},
+                "end_date": {"source": "run_date"},
+            },
+        },
+    )
+    assert created.status_code == 201
+
+    invalid_type = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={
+            "param_schema": {
+                "start_date": {"type": "string", "required": True},
+                "end_date": {"type": "date", "required": True},
+            }
+        },
+    )
+    assert invalid_type.status_code == 422
+    assert ":start_date must be a date parameter" in invalid_type.json()["detail"]
+
+    invalid_schema = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={
+            "param_schema": {
+                "start_date": {"type": "date", "required": True},
+                "replacement_end_date": {"type": "date", "required": True},
+            }
+        },
+    )
+    assert invalid_schema.status_code == 422
+    assert "continue to match" in invalid_schema.json()["detail"]
+
+    live_strategy = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={"data_strategy": "live"},
+    )
+    assert live_strategy.status_code == 422
+    assert "Delete the attached schedule" in live_strategy.json()["detail"]
+
+    unchanged = await client.get(f"/api/v1/admin/endpoints/{endpoint_id}")
+    assert unchanged.json()["data_strategy"] == "snapshot"
+    assert set(unchanged.json()["param_schema"]) == {"start_date", "end_date"}
+
+
+@pytest.mark.integration
 async def test_schedule_rejects_live_endpoint(async_client: object) -> None:
     from httpx import AsyncClient
 
