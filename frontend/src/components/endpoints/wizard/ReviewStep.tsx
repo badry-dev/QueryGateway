@@ -37,7 +37,8 @@ export function ReviewStep({ state, connections, authMethods }: ReviewStepProps)
             <span className="space-y-1">
               {Object.entries(state.param_schema).map(([name, descriptor]) => (
                 <span key={name} className="block">
-                  <code>:{name}</code> — {descriptor.type}; default: {describeParameterDefault(descriptor)}
+                  <code>:{name}</code> — {descriptor.type}; default:{" "}
+                  {describeParameterDefault(descriptor)}
                 </span>
               ))}
             </span>

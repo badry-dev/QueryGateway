@@ -99,8 +99,9 @@ export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
         <Alert variant="destructive">
           <AlertTitle>Snapshot defaults required</AlertTitle>
           <AlertDescription>
-            Add a fixed or dynamic default for {missingDefaults.map((name) => `:${name}`).join(", ")}
-            {" "}in the Parameters step. Scheduled snapshots have no request values to bind.
+            Add a fixed or dynamic default for{" "}
+            {missingDefaults.map((name) => `:${name}`).join(", ")} in the Parameters step. Scheduled
+            snapshots have no request values to bind.
           </AlertDescription>
         </Alert>
       )}
