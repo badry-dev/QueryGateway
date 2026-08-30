@@ -122,7 +122,9 @@ describe("EndpointWizard preview coordination", () => {
     fireEvent.click(screen.getByRole("checkbox"));
 
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
-    expect(screen.getByText(/Scheduled values are configured with the schedule/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Scheduled values are configured with the schedule/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/logical run date/i)).toBeInTheDocument();
   });
 });

@@ -249,7 +249,7 @@ async def _create_snapshot_endpoint_with_date_range(client: object) -> str:
             "host": "oracle.example.com",
             "service_name": "ORCLPDB",
             "username": "hr",
-            "password": "secret",
+            "password": "test-password",
         },
     )
     assert connection.status_code == 201
@@ -332,7 +332,7 @@ async def test_schedule_rejects_live_endpoint(async_client: object) -> None:
             "host": "oracle.example.com",
             "service_name": "ORCLPDB",
             "username": "hr",
-            "password": "secret",
+            "password": "test-password",
         },
     )
     endpoint = await client.post(

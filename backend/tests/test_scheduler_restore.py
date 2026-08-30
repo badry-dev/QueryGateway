@@ -50,7 +50,7 @@ async def test_restore_active_schedules_registers_each_row(
             return cast(list[object], schedules)
 
         async def update(self, schedule: object, values: dict[str, object]) -> None:
-            setattr(schedule, "next_run_at", values["next_run_at"])
+            cast(SimpleNamespace, schedule).next_run_at = values["next_run_at"]
 
     next_run = datetime(2026, 8, 31, 6, tzinfo=UTC)
     add_job = MagicMock(return_value=next_run)

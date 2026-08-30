@@ -9,7 +9,6 @@ Unit tests exercise schema validation, SQL safety, and bind parameter extraction
 import uuid
 
 import pytest
-from app.models.endpoint import DataStrategy
 from app.schemas.endpoint import (
     EndpointCreate,
     EndpointResponse,
