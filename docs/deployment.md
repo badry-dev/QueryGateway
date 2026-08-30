@@ -158,13 +158,22 @@ psql -c "CREATE DATABASE db2api_db OWNER db2api_user;"
 
 Use the Docker images as a starting point. Key considerations:
 
-- Deploy the API as a `Deployment` with `replicas: 1` while the scheduler is in-process
+- Deploy the API as a `Deployment` with `replicas: 1` and `strategy.type: Recreate`
+  while the scheduler is in-process. A rolling update can overlap the old and new
+  Pods even with one replica, causing both schedulers to execute the same jobs.
+- Add distributed scheduler coordination before using rolling updates or multiple
+  API replicas.
 - Use a `Service` for internal routing and an `Ingress` for external access
 - PostgreSQL: use a managed service (e.g., AWS RDS, GCP Cloud SQL) or a StatefulSet
 - Store `ENCRYPTION_KEY` and `DATABASE_URL` as Kubernetes Secrets
 - Configure liveness and readiness probes:
 
 ```yaml
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+
 livenessProbe:
   httpGet:
     path: /api/v1/admin/health/live
