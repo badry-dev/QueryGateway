@@ -18,6 +18,7 @@ from app.repositories.endpoint import EndpointRepository
 from app.repositories.job_run import JobRunRepository
 from app.repositories.schedule import ScheduleRepository
 from app.repositories.snapshot import SnapshotRepository
+from app.schemas.endpoint import require_snapshot_defaults
 from app.schemas.schedule import (
     JobRunResponse,
     ScheduleCreate,
@@ -85,6 +86,7 @@ class ScheduleService:
             ep = await self._ep_repo.get_by_id(payload.endpoint_id)
             if ep is None:
                 raise ValueError(f"Endpoint '{payload.endpoint_id}' not found.")
+            require_snapshot_defaults(ep.data_strategy, ep.param_schema_json or {})
 
         # Check uniqueness — one schedule per endpoint
         existing = await self._repo.get_by_endpoint_id(payload.endpoint_id)

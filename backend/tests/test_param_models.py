@@ -181,3 +181,35 @@ def test_build_param_model_optional_without_default_accepts_value() -> None:
     Model = build_param_model({"p": {"type": "integer", "required": False}})
     instance = Model.model_validate({"p": "42"})
     assert instance.model_dump()["p"] == 42
+
+
+def test_build_param_model_resolves_today_expression() -> None:
+    Model = build_param_model(
+        {"p": {"type": "date", "required": True, "default_expression": "today"}},
+        current_date=date(2026, 8, 30),
+    )
+    assert Model.model_validate({}).model_dump()["p"] == date(2026, 8, 30)
+
+
+def test_build_param_model_resolves_yesterday_expression() -> None:
+    Model = build_param_model(
+        {
+            "p": {
+                "type": "date",
+                "required": True,
+                "default_expression": "yesterday",
+            }
+        },
+        current_date=date(2026, 8, 30),
+    )
+    assert Model.model_validate({}).model_dump()["p"] == date(2026, 8, 29)
+
+
+def test_build_param_model_explicit_value_overrides_dynamic_default() -> None:
+    Model = build_param_model(
+        {"p": {"type": "date", "required": True, "default_expression": "today"}},
+        current_date=date(2026, 8, 30),
+    )
+    assert Model.model_validate({"p": "2026-01-15"}).model_dump()["p"] == date(
+        2026, 1, 15
+    )

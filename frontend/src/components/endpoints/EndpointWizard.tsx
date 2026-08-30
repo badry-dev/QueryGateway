@@ -22,6 +22,7 @@ import { ParamsStep } from "./wizard/ParamsStep";
 import { ReviewStep } from "./wizard/ReviewStep";
 import { SqlStep } from "./wizard/SqlStep";
 import { extractBindParams, reconcileParamSchema } from "./wizard/bindParams";
+import { missingSnapshotDefaults } from "./wizard/parameterDefaults";
 import {
   INITIAL_WIZARD_STATE,
   WIZARD_STEPS,
@@ -118,15 +119,27 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
     setState((s) => ({ ...s, ...patch }));
   }, []);
 
-  const updateParam = useCallback((name: string, field: keyof ParamDescriptor, value: unknown) => {
-    setState((s) => ({
-      ...s,
-      param_schema: {
-        ...s.param_schema,
-        [name]: { ...s.param_schema[name], [field]: value },
-      },
-    }));
-  }, []);
+  const updateParam = useCallback(
+    (name: string, field: keyof ParamDescriptor, value: unknown) => {
+      setState((s) => {
+        const descriptor = { ...s.param_schema[name], [field]: value };
+        if (field === "default" && value !== null && value !== undefined) {
+          descriptor.default_expression = null;
+        }
+        if (field === "default_expression" && value !== null && value !== undefined) {
+          descriptor.default = null;
+        }
+        if (field === "type" && value !== "date") {
+          descriptor.default_expression = null;
+        }
+        return {
+          ...s,
+          param_schema: { ...s.param_schema, [name]: descriptor },
+        };
+      });
+    },
+    [],
+  );
 
   const canNext = (): boolean => {
     if (step === 0) return !!state.connection_id;
@@ -136,7 +149,9 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
       // mirroring the server-side 422 so the admin can't reach Review with
       // an invalid configuration.
       const authOk = !!state.auth_method_id || state.allow_unauthenticated;
-      return !!state.name.trim() && !!state.path.trim() && authOk;
+      const snapshotDefaultsOk =
+        state.data_strategy !== "snapshot" || missingSnapshotDefaults(state.param_schema).length === 0;
+      return !!state.name.trim() && !!state.path.trim() && authOk && snapshotDefaultsOk;
     }
     return true;
   };

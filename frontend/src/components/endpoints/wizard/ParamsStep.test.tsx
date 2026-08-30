@@ -139,37 +139,37 @@ describe("ParamsStep", () => {
   });
 
   describe("boolean type", () => {
-    it("renders a checkbox", () => {
+    it("renders a default selector", () => {
       render(
         <ParamsStep
           state={makeState({ active: { type: "boolean", required: false, default: null } })}
           onUpdateParam={vi.fn()}
         />,
       );
-      expect(screen.getByRole("checkbox")).toBeInTheDocument();
+      expect(screen.getByLabelText("Default value for active")).toBeInTheDocument();
     });
 
-    it("is unchecked when default is null", () => {
+    it("selects no default when default is null", () => {
       render(
         <ParamsStep
           state={makeState({ active: { type: "boolean", required: false, default: null } })}
           onUpdateParam={vi.fn()}
         />,
       );
-      expect(screen.getByRole("checkbox")).not.toBeChecked();
+      expect(screen.getByLabelText("Default value for active")).toHaveValue("none");
     });
 
-    it("is checked when default is true", () => {
+    it("selects true when default is true", () => {
       render(
         <ParamsStep
           state={makeState({ active: { type: "boolean", required: false, default: true } })}
           onUpdateParam={vi.fn()}
         />,
       );
-      expect(screen.getByRole("checkbox")).toBeChecked();
+      expect(screen.getByLabelText("Default value for active")).toHaveValue("true");
     });
 
-    it("sends true when checked", () => {
+    it("sends true when selected", () => {
       const onUpdateParam = vi.fn();
       render(
         <ParamsStep
@@ -177,13 +177,13 @@ describe("ParamsStep", () => {
           onUpdateParam={onUpdateParam}
         />,
       );
-      // fireEvent.click toggles the native checked state and fires the change
-      // event, which React maps to the synthetic onChange handler.
-      fireEvent.click(screen.getByRole("checkbox"));
+      fireEvent.change(screen.getByLabelText("Default value for active"), {
+        target: { value: "true" },
+      });
       expect(onUpdateParam).toHaveBeenCalledWith("active", "default", true);
     });
 
-    it("sends null when unchecked", () => {
+    it("supports false as an explicit default", () => {
       const onUpdateParam = vi.fn();
       render(
         <ParamsStep
@@ -191,8 +191,10 @@ describe("ParamsStep", () => {
           onUpdateParam={onUpdateParam}
         />,
       );
-      fireEvent.click(screen.getByRole("checkbox"));
-      expect(onUpdateParam).toHaveBeenCalledWith("active", "default", null);
+      fireEvent.change(screen.getByLabelText("Default value for active"), {
+        target: { value: "false" },
+      });
+      expect(onUpdateParam).toHaveBeenCalledWith("active", "default", false);
     });
   });
 
@@ -232,6 +234,40 @@ describe("ParamsStep", () => {
       const input = container.querySelector('input[type="date"]') as HTMLInputElement;
       fireEvent.change(input, { target: { value: "" } });
       expect(onUpdateParam).toHaveBeenCalledWith("since", "default", null);
+    });
+
+    it("offers today and yesterday dynamic defaults", () => {
+      const onUpdateParam = vi.fn();
+      render(
+        <ParamsStep
+          state={makeState({ since: { type: "date", required: true, default: null } })}
+          onUpdateParam={onUpdateParam}
+        />,
+      );
+
+      fireEvent.change(screen.getByLabelText("Default mode for since"), {
+        target: { value: "yesterday" },
+      });
+      expect(onUpdateParam).toHaveBeenCalledWith("since", "default_expression", "yesterday");
+    });
+
+    it("shows the selected dynamic default without a fixed date input", () => {
+      render(
+        <ParamsStep
+          state={makeState({
+            since: {
+              type: "date",
+              required: true,
+              default: null,
+              default_expression: "today",
+            },
+          })}
+          onUpdateParam={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByLabelText("Default mode for since")).toHaveValue("today");
+      expect(screen.queryByLabelText("Fixed default date for since")).not.toBeInTheDocument();
     });
   });
 });

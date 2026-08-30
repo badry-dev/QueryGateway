@@ -1,11 +1,13 @@
 /** TypeScript interfaces for API endpoint management (Phase 4). */
 
 export type DataStrategy = "live" | "snapshot";
+export type DateDefaultExpression = "today" | "yesterday";
 
 export interface ParamDescriptor {
   type: "string" | "integer" | "float" | "date" | "boolean";
   required: boolean;
   default?: string | number | boolean | null;
+  default_expression?: DateDefaultExpression | null;
   description?: string;
 }
 

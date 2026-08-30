@@ -20,15 +20,22 @@ function DefaultValueControl({ desc, name, onUpdateParam }: DefaultValueControlP
   switch (desc.type) {
     case "boolean":
       return (
-        <div className="mt-1 flex h-8 items-center">
-          <input
-            type="checkbox"
-            id={`default-${name}`}
-            className="h-4 w-4 rounded border-input"
-            checked={desc.default === true}
-            onChange={(e) => onUpdateParam(name, "default", e.target.checked ? true : null)}
-          />
-        </div>
+        <Select
+          aria-label={`Default value for ${name}`}
+          className="mt-1 h-8 px-2 py-1.5"
+          value={desc.default === true ? "true" : desc.default === false ? "false" : "none"}
+          onChange={(e) =>
+            onUpdateParam(
+              name,
+              "default",
+              e.target.value === "none" ? null : e.target.value === "true",
+            )
+          }
+        >
+          <option value="none">No default</option>
+          <option value="true">True</option>
+          <option value="false">False</option>
+        </Select>
       );
     case "integer":
       return (
@@ -59,13 +66,36 @@ function DefaultValueControl({ desc, name, onUpdateParam }: DefaultValueControlP
       );
     case "date":
       return (
-        <Input
-          className="mt-1 h-8 text-sm"
-          type="date"
-          value={desc.default != null ? String(desc.default) : ""}
-          onChange={(e) => onUpdateParam(name, "default", e.target.value || null)}
-          placeholder="(none)"
-        />
+        <div className="mt-1 space-y-1.5">
+          <Select
+            aria-label={`Default mode for ${name}`}
+            className="h-8 px-2 py-1.5"
+            value={
+              desc.default_expression ?? "fixed"
+            }
+            onChange={(e) => {
+              const mode = e.target.value;
+              if (mode === "today" || mode === "yesterday") {
+                onUpdateParam(name, "default_expression", mode);
+              } else {
+                onUpdateParam(name, "default_expression", null);
+              }
+            }}
+          >
+            <option value="fixed">Fixed date</option>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+          </Select>
+          {desc.default_expression == null && (
+            <Input
+              aria-label={`Fixed default date for ${name}`}
+              className="h-8 text-sm"
+              type="date"
+              value={desc.default != null ? String(desc.default) : ""}
+              onChange={(e) => onUpdateParam(name, "default", e.target.value || null)}
+            />
+          )}
+        </div>
       );
     default:
       return (
@@ -88,6 +118,12 @@ export function ParamsStep({ state, onUpdateParam }: ParamsStepProps) {
       <p className="text-sm text-muted-foreground">
         Define types and defaults for bind parameters detected in your query.
       </p>
+      {state.data_strategy === "snapshot" && entries.length > 0 && (
+        <p className="text-sm text-amber-700">
+          Snapshot endpoints require a default for every parameter. Dynamic dates are evaluated
+          from the application server date whenever the snapshot runs.
+        </p>
+      )}
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No bind parameters detected. You can proceed or go back to modify your query.

@@ -26,6 +26,7 @@ from app.repositories.job_run import JobRunRepository
 from app.repositories.schedule import ScheduleRepository
 from app.repositories.snapshot import SnapshotRepository
 from app.sql.executor import SqlExecutionError, execute_query
+from app.sql.param_models import build_param_model
 
 log = structlog.get_logger()
 
@@ -95,13 +96,12 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             if connection is None or not connection.is_active:
                 raise ValueError("Data source connection is unavailable.")
 
-            # Execute SQL (no parameters for scheduled jobs — snapshot queries
-            # should be parameterless or use defaults)
-            params: dict[str, object] = {}
+            # Scheduled snapshots have no request inputs, so validate and
+            # resolve every configured static or dynamic default through the
+            # same typed model used by live data requests.
             param_schema = endpoint.param_schema_json or {}
-            for param_name, descriptor in param_schema.items():
-                if isinstance(descriptor, dict) and descriptor.get("default") is not None:
-                    params[param_name] = descriptor["default"]
+            ParamModel = build_param_model(param_schema)
+            params = ParamModel.model_validate({}).model_dump(exclude_none=True)
 
             columns, rows, duration_ms = await execute_query(
                 connection=connection,

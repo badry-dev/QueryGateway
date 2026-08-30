@@ -13,6 +13,7 @@ from app.schemas.endpoint import (
     EndpointCreate,
     EndpointResponse,
     EndpointUpdate,
+    ParamDescriptor,
     SqlPreviewRequest,
     extract_bind_params,
     validate_sql_safety,
@@ -85,6 +86,78 @@ def test_endpoint_create_valid() -> None:
     assert payload.name == "test-endpoint"
     assert payload.path == "employees"
     assert payload.connection_id == conn_id
+
+
+def test_date_parameter_accepts_dynamic_default() -> None:
+    descriptor = ParamDescriptor(type="date", required=True, default_expression="today")
+    assert descriptor.default_expression == "today"
+
+
+def test_dynamic_default_rejected_for_non_date_parameter() -> None:
+    with pytest.raises(ValueError, match="only for date"):
+        ParamDescriptor(type="string", required=True, default_expression="today")
+
+
+def test_static_and_dynamic_defaults_are_mutually_exclusive() -> None:
+    with pytest.raises(ValueError, match="only one of"):
+        ParamDescriptor(
+            type="date",
+            required=True,
+            default="2026-08-30",
+            default_expression="today",
+        )
+
+
+def test_snapshot_endpoint_requires_defaults_for_all_parameters() -> None:
+    with pytest.raises(ValueError, match=r"Missing: :end_date, :start_date"):
+        EndpointCreate(
+            name="snapshot-without-defaults",
+            path="snapshot-without-defaults",
+            connection_id=uuid.uuid4(),
+            sql_text=("SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"),
+            param_schema={
+                "start_date": {"type": "date", "required": True},
+                "end_date": {"type": "date", "required": True},
+            },
+            allow_unauthenticated=True,
+            data_strategy="snapshot",
+        )
+
+
+def test_snapshot_endpoint_accepts_dynamic_defaults() -> None:
+    payload = EndpointCreate(
+        name="snapshot-with-dynamic-defaults",
+        path="snapshot-with-dynamic-defaults",
+        connection_id=uuid.uuid4(),
+        sql_text=("SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"),
+        param_schema={
+            "start_date": {
+                "type": "date",
+                "required": True,
+                "default_expression": "yesterday",
+            },
+            "end_date": {
+                "type": "date",
+                "required": True,
+                "default_expression": "today",
+            },
+        },
+        allow_unauthenticated=True,
+        data_strategy="snapshot",
+    )
+    assert payload.param_schema["start_date"].default_expression == "yesterday"
+
+
+def test_parameterless_snapshot_endpoint_is_valid() -> None:
+    payload = EndpointCreate(
+        name="parameterless-snapshot",
+        path="parameterless-snapshot",
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT 1 FROM dual",
+        allow_unauthenticated=True,
+        data_strategy="snapshot",
+    )
+    assert payload.param_schema == {}
 
 
 def test_endpoint_create_normalizes_path() -> None:
@@ -339,6 +412,59 @@ async def test_update_endpoint(async_client: object) -> None:
     data = r2.json()
     assert data["description"] == "Updated description"
     assert data["is_deprecated"] is True
+
+
+@pytest.mark.integration
+async def test_update_live_endpoint_to_snapshot_requires_merged_defaults(
+    async_client: object,
+) -> None:
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    conn_payload = {
+        "name": f"test-conn-snapshot-update-{uuid.uuid4().hex[:8]}",
+        "host": "oracle.example.com",
+        "service_name": "SVC",
+        "username": "scott",
+        "password": "tiger",
+    }
+    connection = await client.post("/api/v1/admin/connections/", json=conn_payload)
+    endpoint = await client.post(
+        "/api/v1/admin/endpoints/",
+        json={
+            "name": f"snapshot-update-{uuid.uuid4().hex[:8]}",
+            "path": f"snapshot-update-{uuid.uuid4().hex[:8]}",
+            "connection_id": connection.json()["id"],
+            "sql_text": "SELECT * FROM orders WHERE business_date = :business_date",
+            "param_schema": {"business_date": {"type": "date", "required": True}},
+            "allow_unauthenticated": True,
+            "data_strategy": "live",
+        },
+    )
+    assert endpoint.status_code == 201
+
+    invalid = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint.json()['id']}",
+        json={"data_strategy": "snapshot"},
+    )
+    assert invalid.status_code == 422
+    assert ":business_date" in invalid.json()["detail"]
+
+    valid = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint.json()['id']}",
+        json={
+            "data_strategy": "snapshot",
+            "param_schema": {
+                "business_date": {
+                    "type": "date",
+                    "required": True,
+                    "default_expression": "today",
+                }
+            },
+        },
+    )
+    assert valid.status_code == 200
+    assert valid.json()["param_schema"]["business_date"]["default_expression"] == "today"
 
 
 @pytest.mark.integration

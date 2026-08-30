@@ -9,10 +9,11 @@ This replaces the hand-rolled ``_coerce_param`` loop that lived in
 
 The descriptor format mirrors ``app.schemas.endpoint.ParamDescriptor`` —
 ``{"type": "string|integer|float|boolean|date", "required": bool,
-"default": <value>, "max_length": int | None}``.
+"default": <value>, "default_expression": "today|yesterday",
+"max_length": int | None}``.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Annotated, Any, Literal, get_args
 
 import structlog
@@ -49,7 +50,19 @@ def _coerce_bool(value: object) -> object:
     return value
 
 
-def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
+def resolve_default_expression(expression: str, *, current_date: date | None = None) -> date:
+    """Resolve a supported dynamic date default using the server's local date."""
+    resolved_date = current_date or date.today()
+    if expression == "today":
+        return resolved_date
+    if expression == "yesterday":
+        return resolved_date - timedelta(days=1)
+    raise ValueError(f"Unsupported default expression: {expression}")
+
+
+def _build_field(
+    descriptor: dict[str, Any], *, current_date: date | None = None
+) -> tuple[type, Any]:
     """Map one descriptor to a ``(annotation, default)`` pair for ``create_model``."""
     raw_type = descriptor.get("type", "string")
     if raw_type not in _VALID_PARAM_TYPES:
@@ -59,6 +72,15 @@ def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
 
     required = bool(descriptor.get("required", True))
     default = descriptor.get("default")
+    default_expression = descriptor.get("default_expression")
+    if default_expression is not None:
+        if raw_type != "date":
+            raise ValueError("Dynamic defaults are supported only for date parameters.")
+        if default is not None:
+            raise ValueError("Declare either default or default_expression, not both.")
+        default = resolve_default_expression(
+            str(default_expression), current_date=current_date
+        )
     max_length = descriptor.get("max_length")
 
     annotation: type
@@ -100,7 +122,9 @@ def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
     return annotation, field_default
 
 
-def build_param_model(param_schema: dict[str, Any]) -> type[BaseModel]:
+def build_param_model(
+    param_schema: dict[str, Any], *, current_date: date | None = None
+) -> type[BaseModel]:
     """Construct a Pydantic model that validates ``param_schema`` payloads.
 
     Non-dict values in ``param_schema`` are ignored to match the legacy
@@ -121,7 +145,7 @@ def build_param_model(param_schema: dict[str, Any]) -> type[BaseModel]:
                 descriptor_type=type(descriptor).__name__,
             )
             continue
-        fields[name] = _build_field(descriptor)
+        fields[name] = _build_field(descriptor, current_date=current_date)
 
     model = create_model(
         "EndpointParams",

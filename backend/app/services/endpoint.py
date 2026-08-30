@@ -24,9 +24,11 @@ from app.schemas.endpoint import (
     EndpointUpdate,
     ParamDescriptor,
     PublicEndpointError,
+    SnapshotConfigurationError,
     SqlPreviewRequest,
     SqlPreviewResponse,
     extract_bind_params,
+    require_snapshot_defaults,
 )
 from app.sql.executor import SqlExecutionError, execute_query
 
@@ -180,6 +182,16 @@ class EndpointService:
         )
         if effective_auth is None and not effective_public:
             raise PublicEndpointError(PUBLIC_OPT_IN_MESSAGE)
+
+        if "data_strategy" in payload.model_fields_set and payload.data_strategy is None:
+            raise SnapshotConfigurationError("data_strategy cannot be null.")
+        effective_strategy = payload.data_strategy or obj.data_strategy
+        effective_param_schema: dict[str, ParamDescriptor] | dict[str, object]
+        if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
+            effective_param_schema = payload.param_schema
+        else:
+            effective_param_schema = obj.param_schema_json or {}
+        require_snapshot_defaults(effective_strategy, effective_param_schema)
 
         # Uniqueness check on name change
         if payload.name is not None and payload.name != obj.name:

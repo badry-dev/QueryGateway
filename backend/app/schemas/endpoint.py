@@ -10,7 +10,7 @@ Public contract rules:
 import re
 import uuid
 from datetime import datetime
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -47,6 +47,10 @@ class PublicEndpointError(ValueError):
     explicit ``allow_unauthenticated`` opt-in. Routers surface this as 422."""
 
 
+class SnapshotConfigurationError(ValueError):
+    """Raised when a snapshot endpoint cannot execute without request inputs."""
+
+
 def extract_bind_params(sql: str) -> list[str]:
     """Return deduplicated bind parameter names from SQL text."""
     # Exclude matches inside single-quoted string literals.
@@ -75,6 +79,13 @@ class ParamDescriptor(BaseModel):
     )
     required: bool = True
     default: str | int | float | bool | None = None
+    default_expression: Literal["today", "yesterday"] | None = Field(
+        None,
+        description=(
+            "Dynamic date default evaluated from the application server date "
+            "when the query executes."
+        ),
+    )
     description: str | None = None
     max_length: int | None = Field(
         None,
@@ -84,9 +95,47 @@ class ParamDescriptor(BaseModel):
 
     @model_validator(mode="after")
     def optional_must_have_default(self) -> Self:
-        if not self.required and self.default is None:
+        if self.default is not None and self.default_expression is not None:
+            raise ValueError("Declare either default or default_expression, not both.")
+        if self.default_expression is not None and self.type != "date":
+            raise ValueError("default_expression is supported only for date parameters.")
+        if not self.required and self.default is None and self.default_expression is None:
             raise ValueError("Optional parameters must declare a default value.")
         return self
+
+
+def missing_snapshot_defaults(
+    param_schema: dict[str, ParamDescriptor] | dict[str, object],
+) -> list[str]:
+    """Return snapshot bind names that cannot be resolved without a request."""
+    missing: list[str] = []
+    for name, raw_descriptor in param_schema.items():
+        if isinstance(raw_descriptor, ParamDescriptor):
+            descriptor = raw_descriptor
+        elif isinstance(raw_descriptor, dict):
+            descriptor = ParamDescriptor.model_validate(raw_descriptor)
+        else:
+            missing.append(name)
+            continue
+
+        if descriptor.default is None and descriptor.default_expression is None:
+            missing.append(name)
+    return sorted(missing)
+
+
+def require_snapshot_defaults(
+    data_strategy: DataStrategy,
+    param_schema: dict[str, ParamDescriptor] | dict[str, object],
+) -> None:
+    """Reject snapshot endpoints whose binds require caller-supplied values."""
+    if data_strategy != DataStrategy.snapshot:
+        return
+    missing = missing_snapshot_defaults(param_schema)
+    if missing:
+        names = ", ".join(f":{name}" for name in missing)
+        raise SnapshotConfigurationError(
+            f"Snapshot endpoints require a default for every parameter. Missing: {names}."
+        )
 
 
 class EndpointCreate(BaseModel):
@@ -163,6 +212,7 @@ class EndpointCreate(BaseModel):
             raise ValueError(
                 f"Schema declares params not referenced in SQL: {sorted(unused)}"
             )
+        require_snapshot_defaults(self.data_strategy, self.param_schema)
         return self
 
 
