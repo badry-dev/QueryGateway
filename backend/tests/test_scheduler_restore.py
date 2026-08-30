@@ -6,6 +6,7 @@ from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from structlog.testing import capture_logs
 
 
 def test_scheduled_params_retain_explicit_null_bind() -> None:
@@ -126,8 +127,17 @@ async def test_start_scheduler_cleans_up_and_propagates_restore_failure(
     )
     monkeypatch.setattr(scheduler_service, "_scheduler", None)
 
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        await scheduler_service.start_scheduler()
+    with capture_logs() as logs:
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await scheduler_service.start_scheduler()
 
     scheduler.shutdown.assert_called_once_with(wait=False)
     assert scheduler_service._scheduler is None
+    failure = next(log for log in logs if log["event"] == "scheduler_start_failed")
+    assert failure["request_id"] is None
+    assert failure["user"] == "scheduler"
+    assert failure["endpoint"] is None
+    assert failure["status"] is None
+    assert failure["duration_ms"] is None
+    assert failure["method"] == "SCHEDULE"
+    assert failure["client_ip"] is None

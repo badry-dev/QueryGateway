@@ -28,7 +28,15 @@ from app.repositories.snapshot import SnapshotRepository
 from app.sql.executor import SqlExecutionError, execute_query
 from app.sql.param_models import build_param_model
 
-log = structlog.get_logger()
+log = structlog.get_logger().bind(
+    request_id=None,
+    user="scheduler",
+    endpoint=None,
+    status=None,
+    duration_ms=None,
+    method="SCHEDULE",
+    client_ip=None,
+)
 
 # Module-level scheduler instance — initialized in start_scheduler().
 _scheduler: Any = None
