@@ -144,9 +144,8 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
     if (step === 0) return !!state.connection_id;
     if (step === 1) return !!state.sql_text.trim();
     if (step === 3) {
-      // A public endpoint (no auth method) requires an explicit opt-in,
-      // mirroring the server-side 422 so the admin can't reach Review with
-      // an invalid configuration.
+      // An endpoint without a dedicated method requires an explicit opt-in to
+      // platform-admin Bearer authentication, mirroring the server-side 422.
       const authOk = !!state.auth_method_id || state.allow_unauthenticated;
       const snapshotDefaultsOk =
         state.data_strategy !== "snapshot" ||

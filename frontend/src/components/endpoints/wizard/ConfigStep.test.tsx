@@ -20,21 +20,22 @@ function makeState(overrides: Partial<WizardState> = {}): WizardState {
   };
 }
 
-describe("ConfigStep public-endpoint warning (M1)", () => {
-  it("warns that the endpoint is PUBLIC when no auth method is selected", () => {
+describe("ConfigStep platform authentication fallback", () => {
+  it("explains that platform Bearer authentication is required without an endpoint method", () => {
     render(<ConfigStep state={makeState()} update={vi.fn()} authMethods={[]} />);
-    expect(screen.getByText(/This endpoint is PUBLIC/i)).toBeInTheDocument();
+    expect(screen.getByText(/Platform authentication required/i)).toBeInTheDocument();
+    expect(screen.queryByText(/This endpoint is PUBLIC/i)).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox")).not.toBeChecked();
   });
 
-  it("checking the confirmation sets allow_unauthenticated", () => {
+  it("checking the confirmation opts into the platform Bearer fallback", () => {
     const update = vi.fn();
     render(<ConfigStep state={makeState()} update={update} authMethods={[]} />);
     fireEvent.click(screen.getByRole("checkbox"));
     expect(update).toHaveBeenCalledWith({ allow_unauthenticated: true });
   });
 
-  it("hides the public warning once an auth method is selected", () => {
+  it("hides the fallback notice once an endpoint auth method is selected", () => {
     render(
       <ConfigStep
         state={makeState({ auth_method_id: "auth-1" })}
@@ -42,7 +43,7 @@ describe("ConfigStep public-endpoint warning (M1)", () => {
         authMethods={[]}
       />,
     );
-    expect(screen.queryByText(/This endpoint is PUBLIC/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Platform authentication required/i)).not.toBeInTheDocument();
   });
 });
 

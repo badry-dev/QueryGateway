@@ -74,7 +74,7 @@ QueryGateway is organized into five admin modules, all driven from the React adm
 |--------|--------------|
 | **Connections** | Create, edit, test, and delete Oracle database connections. Credentials are encrypted at rest; pool sizing and timeouts are configurable. Uses `python-oracledb`; thin mode needs no native client, while the backend Docker image includes Oracle Instant Client 19.32 for thick mode. |
 | **API Creation Wizard** | A multi-step wizard that turns a parameterized SQL query into a deployable GET endpoint: pick a connection, author SQL with a rich editor, supply preview-only sample values for detected bind parameters, configure fixed values, explicit SQL `NULL` values for optional binds, or dynamic date defaults, preview sample rows and inferred schema, map/rename output columns, attach an auth method, and select a data strategy. |
-| **Authentication** | Manage per-endpoint auth methods — Bearer token (JWT), Basic Auth, and API key. Tokens are issued/verified with `PyJWT`; credentials are hashed with `bcrypt`. When an auth method is attached to an endpoint, middleware enforces it on every request; endpoints with no auth method attached are served publicly. |
+| **Authentication** | Manage per-endpoint auth methods — Bearer token (JWT), Basic Auth, and API key. Tokens are issued/verified with `PyJWT`; credentials are hashed with `bcrypt`. Every `/api/v1/data/*` request is authenticated; endpoints without a dedicated method require the platform admin Bearer token. |
 | **Scheduling & Snapshots** | Schedule query refreshes with friendly hourly, daily, weekly, or monthly calendar controls, an advanced custom-cron option, or a fixed interval. Run now, pause/resume, and enable/disable jobs. Results are cached as PostgreSQL JSONB snapshots and served with freshness metadata. Schedule definitions are persisted in the app database, active APScheduler jobs are restored on API startup, and deleting a schedule preserves its job-run and snapshot history. Deleting an endpoint removes its schedule and snapshots while retaining orphaned job-run audit records. |
 | **Settings & Health** | Configure runtime settings (base URL/port, logging level, query timeouts, CORS/rate-limit inputs) and view a health dashboard covering API, PostgreSQL, Oracle connectivity, scheduler status, and recent job outcomes. |
 
@@ -82,7 +82,7 @@ QueryGateway is organized into five admin modules, all driven from the React adm
 
 - **SQL injection resistant** — user-defined SQL runs only through SQLAlchemy `text()` with named bind parameters. Request values are never concatenated into SQL strings, and bind values are validated through typed schemas before execution.
 - **Encrypted credentials** — Oracle connection secrets are encrypted at rest using an environment-provided key.
-- **Per-endpoint authentication** — attach a Bearer token, Basic Auth, or API key policy to an endpoint and it is enforced on every request. Endpoints published without an auth method are public, so assign one to any endpoint that should be protected.
+- **Mandatory data authentication** — attach a Bearer token, Basic Auth, or API key policy to an endpoint. If no dedicated method is attached, the endpoint requires the platform admin Bearer token; anonymous data access is never allowed.
 - **Structured, redacted logging** — `structlog` emits JSON logs with correlation fields (`request_id`, `user`, `endpoint`, `status`, `duration_ms`); credentials and tokens are redacted before emission.
 
 ### Two API Surfaces

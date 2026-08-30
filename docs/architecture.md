@@ -47,7 +47,7 @@ Live data requests enforce every parameter marked `required`, even when that par
 ### Authentication
 
 - Admin API: session-based or JWT Bearer (TBD per Phase 1).
-- Data endpoints: per-endpoint configurable auth — Bearer token, Basic Auth, or API key. Middleware resolves the policy from endpoint metadata at request time and enforces it when an auth method is attached. Endpoints published without an auth method are served publicly, so one must be assigned to any endpoint that should be protected.
+- Data endpoints: every `/api/v1/data/*` request is authenticated. Middleware enforces the endpoint's Bearer token, Basic Auth, or API key method when configured; otherwise it requires the platform admin Bearer token. Anonymous data access is never allowed.
 - Credentials are hashed with `bcrypt`; tokens are issued/verified with `PyJWT`.
 
 ### Scheduler

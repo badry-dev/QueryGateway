@@ -105,4 +105,23 @@ describe("EndpointWizard preview coordination", () => {
     await waitFor(() => expect(previewMock).toHaveBeenCalledOnce());
     expect(previewMock.mock.calls[0][0].params.customer_id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
+
+  it("blocks snapshot review when a parameter has no schedule-time default", async () => {
+    renderWizard();
+    await advanceToParameters();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByPlaceholderText("My API Endpoint"), {
+      target: { value: "Orders" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("employees"), {
+      target: { value: "orders" },
+    });
+    const configSelectors = screen.getAllByRole("combobox");
+    fireEvent.change(configSelectors[1], { target: { value: "snapshot" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.getByText(/:customer_id/)).toBeInTheDocument();
+  });
 });

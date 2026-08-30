@@ -232,7 +232,7 @@ alembic downgrade -1
 4. **Create first connection**: Use the Connections page to add an Oracle data source
 5. **Test connection**: Click "Test" to verify Oracle connectivity
 6. **Create first endpoint**: Use the API Endpoints page wizard
-7. **Verify data endpoint**: `curl http://localhost:8000/api/v1/data/<your-path>`
+7. **Verify data endpoint**: `curl -H "Authorization: Bearer <token>" http://localhost:8000/api/v1/data/<your-path>`
 
 ## Security Hardening for Production
 

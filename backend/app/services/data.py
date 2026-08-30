@@ -26,9 +26,11 @@ from typing import Any
 import structlog
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.admin import get_current_admin
 from app.middleware import resolve_request_id
 from app.models.endpoint import ApiEndpoint
 from app.repositories.auth_method import AuthMethodRepository
@@ -110,13 +112,39 @@ class DataService:
         principal: str | None = None
         if endpoint.auth_method_id is not None:
             principal = await self._enforce_auth(request, endpoint.auth_method_id)
-        elif not endpoint.allow_unauthenticated:
-            # No auth method AND no explicit opt-in. EndpointCreate/Update both
-            # reject this combination, but it can still arise out-of-band — most
-            # importantly when an auth method an endpoint references is deleted
-            # (the FK is ondelete=SET NULL), which would otherwise silently turn
-            # a previously protected endpoint public. Default-deny rather than
-            # serve it unauthenticated (closes the M1 deletion side-channel).
+        else:
+            principal = await self._enforce_platform_auth(request, endpoint, started_at, path)
+
+        if endpoint.data_strategy.value == "snapshot":
+            response = await self._serve_snapshot(endpoint, path, principal)
+        else:
+            response = await self._serve_live(endpoint, request, path, principal)
+
+        return DataServiceResult(
+            response=response,
+            principal=principal,
+            endpoint_id=endpoint.id,
+        )
+
+    async def _enforce_platform_auth(
+        self,
+        request: Request,
+        endpoint: ApiEndpoint,
+        started_at: float,
+        path: str,
+    ) -> str:
+        """Require the platform admin bearer token when no endpoint auth is set."""
+        authorization = request.headers.get("Authorization", "")
+        credentials = None
+        if authorization.lower().startswith("bearer "):
+            credentials = HTTPAuthorizationCredentials(
+                scheme="Bearer",
+                credentials=authorization[7:],
+            )
+
+        try:
+            principal = await get_current_admin(credentials)
+        except HTTPException:
             log.warning(
                 "unauthenticated_endpoint_denied",
                 endpoint_id=str(endpoint.id),
@@ -128,38 +156,8 @@ class DataService:
                 request_id=resolve_request_id(request),
                 duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
             )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication configuration is unavailable.",
-            )
-
-        if endpoint.data_strategy.value == "snapshot":
-            response = await self._serve_snapshot(endpoint, path, principal)
-        else:
-            response = await self._serve_live(endpoint, request, path, principal)
-
-        if endpoint.auth_method_id is None:
-            # Reached only for an explicitly public endpoint (the default-deny
-            # branch above already returned). Audit every public hit with the
-            # full structured-log field set (§3.5); ``allow_unauthenticated`` is
-            # always True here.
-            log.warning(
-                "public_endpoint_served",
-                endpoint_id=str(endpoint.id),
-                endpoint=path,
-                user=principal or "anonymous",
-                status=response.status_code,
-                method=request.method,
-                client_ip=request.client.host if request.client else None,
-                request_id=resolve_request_id(request),
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
-            )
-
-        return DataServiceResult(
-            response=response,
-            principal=principal,
-            endpoint_id=endpoint.id,
-        )
+            raise
+        return principal.username
 
     # ── Endpoint lookup ─────────────────────────────────────────────────────
 

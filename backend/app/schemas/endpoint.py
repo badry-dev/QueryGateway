@@ -33,18 +33,17 @@ _UNSAFE_PATTERNS = [
 # Valid path segment: lowercase alphanumeric, hyphens, underscores, slashes.
 _PATH_RE = re.compile(r"^[a-z0-9][a-z0-9\-_/]*$")
 
-# Message shown when an endpoint would be served with no auth method and
-# without an explicit opt-in to public access (M1 — silent public endpoints).
+# Message shown when an endpoint has no dedicated auth method and has not opted
+# into the platform-admin Bearer fallback. Anonymous data access is forbidden.
 PUBLIC_OPT_IN_MESSAGE = (
-    "Endpoint has no auth_method_id. Attach an auth method to protect it, or "
-    "set allow_unauthenticated=true to deliberately publish it as a PUBLIC "
-    "(unauthenticated) endpoint."
+    "Endpoint has no auth_method_id. Attach an endpoint auth method, or set "
+    "allow_unauthenticated=true to use platform-admin Bearer authentication. "
+    "Anonymous data access is not supported."
 )
 
 
 class PublicEndpointError(ValueError):
-    """Raised when a write would leave an endpoint unauthenticated without an
-    explicit ``allow_unauthenticated`` opt-in. Routers surface this as 422."""
+    """Raised when an endpoint has no configured authentication path."""
 
 
 class SnapshotConfigurationError(ValueError):
@@ -195,8 +194,8 @@ class EndpointCreate(BaseModel):
     allow_unauthenticated: bool = Field(
         False,
         description=(
-            "Explicit opt-in to serve this endpoint with NO authentication. "
-            "Required (must be true) when auth_method_id is omitted."
+            "Legacy-named opt-in to platform-admin Bearer authentication when "
+            "auth_method_id is omitted. It never permits anonymous access."
         ),
     )
     data_strategy: DataStrategy = DataStrategy.live
@@ -213,9 +212,9 @@ class EndpointCreate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def require_auth_or_explicit_public(self) -> Self:
-        # M1: never allow an endpoint to be created with no auth method
-        # unless the admin explicitly opts into public access.
+    def require_auth_or_explicit_fallback(self) -> Self:
+        # Without a dedicated method, require explicit use of the platform
+        # Bearer fallback. The legacy field name does not permit anonymity.
         if self.auth_method_id is None and not self.allow_unauthenticated:
             raise ValueError(PUBLIC_OPT_IN_MESSAGE)
         return self
@@ -263,8 +262,8 @@ class EndpointUpdate(BaseModel):
     allow_unauthenticated: bool | None = Field(
         None,
         description=(
-            "Explicit opt-in to serve this endpoint with NO authentication. "
-            "Set true when detaching the auth method to keep it public."
+            "Legacy-named opt-in to platform-admin Bearer authentication when "
+            "detaching the endpoint-specific auth method."
         ),
     )
     data_strategy: DataStrategy | None = None
@@ -313,11 +312,9 @@ class EndpointUpdate(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def require_auth_or_explicit_public(self) -> Self:
-        # M1: when this request explicitly sets BOTH fields, reject the unsafe
-        # combination here (422). The merged-state case — e.g. detaching the
-        # auth method without touching allow_unauthenticated — is enforced
-        # against the stored row in EndpointService.update_endpoint.
+    def require_auth_or_explicit_fallback(self) -> Self:
+        # When this request explicitly sets both fields, reject a configuration
+        # with neither a dedicated method nor the platform Bearer fallback.
         fields_set = self.model_fields_set
         if "auth_method_id" in fields_set and "allow_unauthenticated" in fields_set:
             if self.auth_method_id is None and not self.allow_unauthenticated:

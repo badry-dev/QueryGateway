@@ -41,7 +41,7 @@ export interface EndpointCreate {
   param_schema?: Record<string, ParamDescriptor>;
   column_map?: Record<string, string>;
   auth_method_id?: string | null;
-  /** Explicit opt-in to a public (unauthenticated) endpoint; required when auth_method_id is null. */
+  /** Legacy-named opt-in to platform-admin Bearer fallback when auth_method_id is null. */
   allow_unauthenticated?: boolean;
   data_strategy?: DataStrategy;
   is_active?: boolean;
