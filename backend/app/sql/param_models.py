@@ -65,6 +65,7 @@ def _build_field(
     descriptor: dict[str, Any],
     *,
     current_date: date | None = None,
+    enforce_required: bool = False,
 ) -> tuple[type, Any]:
     """Map one descriptor to a ``(annotation, default)`` pair for ``create_model``."""
     raw_type = descriptor.get("type", "string")
@@ -99,7 +100,13 @@ def _build_field(
         if isinstance(max_length, int) and max_length >= 1:
             annotation = Annotated[str, Field(max_length=max_length)]  # type: ignore[assignment]
 
-    if default_is_null:
+    # Scheduled execution must resolve every configured default without
+    # request input. Live requests use ``enforce_required=True`` so a
+    # scheduler default never weakens their public required-parameter
+    # contract. Optional request fields continue to use their defaults.
+    if enforce_required and required:
+        field_default = ...
+    elif default_is_null:
         annotation = annotation | None  # type: ignore[assignment]
         field_default = None
     elif default is not None:
@@ -124,6 +131,7 @@ def build_param_model(
     param_schema: dict[str, Any],
     *,
     current_date: date | None = None,
+    enforce_required: bool = False,
 ) -> type[BaseModel]:
     """Construct a Pydantic model that validates ``param_schema`` payloads.
 
@@ -145,7 +153,11 @@ def build_param_model(
                 descriptor_type=type(descriptor).__name__,
             )
             continue
-        fields[name] = _build_field(descriptor, current_date=current_date)
+        fields[name] = _build_field(
+            descriptor,
+            current_date=current_date,
+            enforce_required=enforce_required,
+        )
 
     model: type[BaseModel] = create_model(
         "EndpointParams",

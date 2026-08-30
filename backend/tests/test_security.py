@@ -468,6 +468,48 @@ class TestDataEndpointParams:
         assert r.status_code == 422
         assert "id" in r.json()["detail"]
 
+    async def test_required_live_param_does_not_fall_back_to_scheduler_default(
+        self, async_client: object
+    ) -> None:
+        client: AsyncClient = async_client  # type: ignore[assignment]
+
+        connection = await client.post(
+            "/api/v1/admin/connections/",
+            json={
+                "name": _unique("required-default-conn"),
+                "host": "oracle.example.com",
+                "service_name": "SVC",
+                "username": "hr",
+                "password": "secret",
+            },
+        )
+        assert connection.status_code == 201
+
+        ep_path = _unique("required-default-data")
+        endpoint = await client.post(
+            "/api/v1/admin/endpoints/",
+            json={
+                "name": _unique("required-default-ep"),
+                "path": ep_path,
+                "connection_id": connection.json()["id"],
+                "allow_unauthenticated": True,
+                "sql_text": "SELECT * FROM t WHERE business_date = :business_date",
+                "param_schema": {
+                    "business_date": {
+                        "type": "date",
+                        "required": True,
+                        "default_expression": "yesterday",
+                    }
+                },
+            },
+        )
+        assert endpoint.status_code == 201
+
+        response = await client.get(f"/api/v1/data/{ep_path}")
+        assert response.status_code == 422
+        assert "business_date" in response.json()["detail"]
+        assert "Field required" in response.json()["detail"]
+
     async def test_invalid_param_type(self, async_client: object) -> None:
         client: AsyncClient = async_client  # type: ignore[assignment]
 

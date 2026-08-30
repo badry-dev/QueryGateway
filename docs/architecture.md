@@ -41,6 +41,8 @@
 ### SQL Safety
 All user-defined SQL is executed via SQLAlchemy `text()` with named bind parameters (`:param_name`). String interpolation of user input is prohibited at all layers. Bind values are validated through typed Pydantic schemas before reaching the query executor.
 
+Live data requests enforce every parameter marked `required`, even when that parameter also has a scheduler default. Defaults exist so scheduled execution can run without request input and so optional live parameters can be omitted.
+
 ### Authentication
 - Admin API: session-based or JWT Bearer (TBD per Phase 1).
 - Data endpoints: per-endpoint configurable auth — Bearer token, Basic Auth, or API key. Middleware resolves the policy from endpoint metadata at request time and enforces it when an auth method is attached. Endpoints published without an auth method are served publicly, so one must be assigned to any endpoint that should be protected.

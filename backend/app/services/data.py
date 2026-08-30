@@ -367,7 +367,11 @@ class DataService:
     @staticmethod
     def _coerce_params(endpoint: ApiEndpoint, request: Request) -> dict[str, Any]:
         param_schema = endpoint.param_schema_json or {}
-        Model = build_param_model(param_schema)
+        # Scheduler defaults make snapshot refreshes autonomous, but they do
+        # not make required HTTP query parameters optional. Live callers must
+        # supply every descriptor marked required; configured defaults remain
+        # available to the scheduler and to omitted optional request fields.
+        Model = build_param_model(param_schema, enforce_required=True)
         # Pull only declared params from the query string; ignore unknowns
         # so the legacy loop's behavior is preserved. Filter on
         # ``isinstance(descriptor, dict)`` so a corrupted non-dict
