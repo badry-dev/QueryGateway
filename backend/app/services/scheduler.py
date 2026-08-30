@@ -147,28 +147,30 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             from app.repositories.settings import SettingsRepository  # noqa: PLC0415
 
             settings_repo = SettingsRepository(db)
-            retention_setting = await settings_repo.get_by_key(
-                "snapshot_retention_count"
-            )
-            retention_count = (
-                int(retention_setting.value) if retention_setting else 5
-            )
+            retention_setting = await settings_repo.get_by_key("snapshot_retention_count")
+            retention_count = int(retention_setting.value) if retention_setting else 5
             await snap_repo.delete_old(eid, keep=retention_count)
 
             # Mark job success
             finished_at = datetime.now(UTC)
-            await job_repo.update(job_run, {
-                "finished_at": finished_at,
-                "status": JobRunStatus.success,
-                "row_count": len(rows),
-            })
+            await job_repo.update(
+                job_run,
+                {
+                    "finished_at": finished_at,
+                    "status": JobRunStatus.success,
+                    "row_count": len(rows),
+                },
+            )
 
             # Update schedule last_run_at
             schedule = await sched_repo.get_by_id(sid)
             if schedule:
-                await sched_repo.update(schedule, {
-                    "last_run_at": finished_at,
-                })
+                await sched_repo.update(
+                    schedule,
+                    {
+                        "last_run_at": finished_at,
+                    },
+                )
 
             await db.commit()
 
@@ -190,18 +192,24 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             if "timeout" in error_detail.lower():
                 status = JobRunStatus.timeout
 
-            await job_repo.update(job_run, {
-                "finished_at": finished_at,
-                "status": status,
-                "error_detail": error_detail,
-            })
+            await job_repo.update(
+                job_run,
+                {
+                    "finished_at": finished_at,
+                    "status": status,
+                    "error_detail": error_detail,
+                },
+            )
 
             # Update schedule last_run_at even on failure
             schedule = await sched_repo.get_by_id(sid)
             if schedule:
-                await sched_repo.update(schedule, {
-                    "last_run_at": finished_at,
-                })
+                await sched_repo.update(
+                    schedule,
+                    {
+                        "last_run_at": finished_at,
+                    },
+                )
 
             await db.commit()
 
@@ -218,24 +226,31 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
 async def restore_active_schedules() -> int:
     """Register all active database schedules in the in-memory scheduler."""
     restored = 0
+    failed_schedule_ids: list[str] = []
     async with AsyncSessionLocal() as db:
         schedules = await ScheduleRepository(db).get_all(active_only=True)
         for schedule in schedules:
             try:
-                add_schedule_job(
+                registered = add_schedule_job(
                     schedule_id=schedule.id,
                     endpoint_id=schedule.endpoint_id,
                     schedule_type=schedule.schedule_type,
                     cron_expression=schedule.cron_expression,
                     interval_seconds=schedule.interval_seconds,
                 )
+                if not registered:
+                    raise ValueError("Schedule configuration could not be registered.")
                 restored += 1
             except Exception as exc:  # noqa: BLE001
+                failed_schedule_ids.append(str(schedule.id))
                 log.error(
                     "scheduler_job_restore_failed",
                     schedule_id=str(schedule.id),
                     error=str(exc),
                 )
+    if failed_schedule_ids:
+        failed = ", ".join(failed_schedule_ids)
+        raise RuntimeError(f"Failed to restore active schedules: {failed}")
     log.info("scheduler_jobs_restored", restored_count=restored)
     return restored
 
@@ -244,6 +259,7 @@ async def start_scheduler() -> None:
     """Initialize and start the APScheduler instance."""
     global _scheduler  # noqa: PLW0603
 
+    scheduler = None
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler  # noqa: PLC0415
 
@@ -259,7 +275,15 @@ async def start_scheduler() -> None:
         log.info("scheduler_started")
         await restore_active_schedules()
     except Exception as exc:  # noqa: BLE001
+        if _scheduler is not None:
+            stop_scheduler()
+        elif scheduler is not None:
+            try:
+                scheduler.shutdown(wait=False)
+            except Exception as shutdown_exc:  # noqa: BLE001
+                log.warning("scheduler_cleanup_failed", error=str(shutdown_exc))
         log.error("scheduler_start_failed", error=str(exc))
+        raise
 
 
 def stop_scheduler() -> None:
@@ -280,11 +304,11 @@ def add_schedule_job(
     schedule_type: str,
     cron_expression: str | None = None,
     interval_seconds: int | None = None,
-) -> None:
+) -> bool:
     """Register a job in APScheduler."""
     if _scheduler is None:
         log.warning("scheduler_not_running", action="add_job")
-        return
+        return False
 
     from apscheduler.schedulers.asyncio import AsyncIOScheduler  # noqa: PLC0415
 
@@ -318,7 +342,7 @@ def add_schedule_job(
         kwargs["seconds"] = interval_seconds
     else:
         log.warning("invalid_schedule_config", schedule_id=str(schedule_id))
-        return
+        return False
 
     scheduler.add_job(**kwargs)
     log.info(
@@ -326,6 +350,7 @@ def add_schedule_job(
         job_id=job_id,
         schedule_type=schedule_type,
     )
+    return True
 
 
 def remove_schedule_job(schedule_id: uuid.UUID) -> None:
