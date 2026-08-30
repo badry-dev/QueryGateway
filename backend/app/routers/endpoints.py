@@ -96,9 +96,7 @@ async def get_endpoint(
 ) -> EndpointResponse:
     result = await svc.get_endpoint(endpoint_id)
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found.")
     return result
 
 
@@ -163,6 +161,4 @@ async def preview_sql(
     try:
         return await svc.preview_sql(payload)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

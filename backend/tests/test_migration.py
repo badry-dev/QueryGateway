@@ -249,9 +249,7 @@ class TestSchemaCreation:
         r = await client.get("/api/v1/admin/health/ready")
         assert r.status_code == 200
 
-    async def test_connection_crud_after_fresh_schema(
-        self, async_client: object
-    ) -> None:
+    async def test_connection_crud_after_fresh_schema(self, async_client: object) -> None:
         """Verify CRUD operations work on fresh schema."""
         from httpx import AsyncClient
 

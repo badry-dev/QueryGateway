@@ -37,9 +37,7 @@ class ScheduleCreate(BaseModel):
         if self.schedule_type == "cron" and not self.cron_expression:
             raise ValueError("cron_expression is required when schedule_type is 'cron'.")
         if self.schedule_type == "interval" and not self.interval_seconds:
-            raise ValueError(
-                "interval_seconds is required when schedule_type is 'interval'."
-            )
+            raise ValueError("interval_seconds is required when schedule_type is 'interval'.")
 
 
 class ScheduleUpdate(BaseModel):
