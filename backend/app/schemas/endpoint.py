@@ -117,8 +117,16 @@ class ParamDescriptor(BaseModel):
             raise ValueError("A NULL default is supported only for optional parameters.")
         if self.default_expression is not None and self.type != "date":
             raise ValueError("default_expression is supported only for date parameters.")
-        if not self.required and configured_defaults == 0:
-            raise ValueError("Optional parameters must declare a default value.")
+        if configured_defaults:
+            from app.sql.param_models import build_param_model  # noqa: PLC0415
+
+            try:
+                model = build_param_model({"value": self.model_dump()})
+                model.model_validate({})
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid default for parameter type '{self.type}'."
+                ) from exc
         return self
 
 

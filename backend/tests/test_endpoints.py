@@ -9,6 +9,7 @@ Unit tests exercise schema validation, SQL safety, and bind parameter extraction
 import uuid
 
 import pytest
+from app.models.endpoint import DataStrategy
 from app.schemas.endpoint import (
     EndpointCreate,
     EndpointResponse,
@@ -16,6 +17,7 @@ from app.schemas.endpoint import (
     ParamDescriptor,
     SqlPreviewRequest,
     extract_bind_params,
+    require_snapshot_defaults,
     validate_sql_safety,
 )
 
@@ -117,6 +119,48 @@ def test_optional_parameter_accepts_explicit_null_default() -> None:
 def test_required_parameter_rejects_explicit_null_default() -> None:
     with pytest.raises(ValueError, match="only for optional parameters"):
         ParamDescriptor(type="string", required=True, default_is_null=True)
+
+
+def test_optional_parameter_accepts_no_default() -> None:
+    descriptor = ParamDescriptor(type="integer", required=False)
+    assert descriptor.default is None
+    assert descriptor.default_is_null is False
+
+
+def test_parameter_rejects_incompatible_static_default() -> None:
+    with pytest.raises(ValueError, match="Invalid default"):
+        ParamDescriptor(type="integer", required=True, default="abc")
+
+
+def test_endpoint_create_rejects_incompatible_static_default() -> None:
+    with pytest.raises(ValueError, match="Invalid default"):
+        EndpointCreate(
+            name="invalid-default",
+            path="invalid-default",
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT * FROM stores WHERE id = :store_id",
+            param_schema={
+                "store_id": {"type": "integer", "required": True, "default": "abc"}
+            },
+            allow_unauthenticated=True,
+        )
+
+
+def test_endpoint_update_rejects_incompatible_static_default() -> None:
+    with pytest.raises(ValueError, match="Invalid default"):
+        EndpointUpdate(
+            param_schema={
+                "store_id": {"type": "integer", "required": True, "default": "abc"}
+            }
+        )
+
+
+def test_snapshot_default_validation_rejects_incompatible_stored_default() -> None:
+    with pytest.raises(ValueError, match="Invalid default"):
+        require_snapshot_defaults(
+            DataStrategy.snapshot,
+            {"store_id": {"type": "integer", "required": True, "default": "abc"}},
+        )
 
 
 def test_snapshot_endpoint_requires_defaults_for_all_parameters() -> None:
