@@ -221,6 +221,23 @@ describe("ParamsStep", () => {
       expect(onUpdateParam).toHaveBeenCalledWith("active", "default", false);
     });
 
+    it("clears an existing boolean value when no default is selected", () => {
+      const onUpdateParam = vi.fn();
+      render(
+        <ParamsStep
+          state={makeState({ active: { type: "boolean", required: false, default: true } })}
+          onUpdateParam={onUpdateParam}
+        />,
+      );
+
+      fireEvent.change(screen.getByLabelText("Default value for active"), {
+        target: { value: "none" },
+      });
+
+      expect(onUpdateParam).toHaveBeenNthCalledWith(1, "active", "default", null);
+      expect(onUpdateParam).toHaveBeenNthCalledWith(2, "active", "default_is_null", false);
+    });
+
     it("supports NULL as an optional boolean default", () => {
       const onUpdateParam = vi.fn();
       render(

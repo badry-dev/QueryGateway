@@ -65,6 +65,7 @@ function DefaultValueControl({ desc, name, onUpdateParam }: DefaultValueControlP
             if (e.target.value === "null") {
               onUpdateParam(name, "default_is_null", true);
             } else if (e.target.value === "none") {
+              onUpdateParam(name, "default", null);
               onUpdateParam(name, "default_is_null", false);
             } else {
               onUpdateParam(name, "default", e.target.value === "true");
