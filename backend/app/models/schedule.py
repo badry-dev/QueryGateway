@@ -6,6 +6,7 @@ from enum import StrEnum
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, text
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -38,13 +39,19 @@ class Schedule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cron_expression: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Used when schedule_type == 'interval'. Positive integer seconds.
     interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="UTC", server_default="UTC"
+    )
+    parameter_bindings_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    window_config_json: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default=text("true")
     )
-    last_run_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    next_run_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -28,7 +28,6 @@ from app.schemas.endpoint import (
     SqlPreviewRequest,
     SqlPreviewResponse,
     extract_bind_params,
-    require_snapshot_defaults,
 )
 from app.sql.executor import SqlExecutionError, execute_query
 
@@ -80,9 +79,7 @@ class EndpointService:
         self._repo = repo
         self._conn_repo = conn_repo
 
-    async def list_endpoints(
-        self, *, active_only: bool = False
-    ) -> Sequence[EndpointResponse]:
+    async def list_endpoints(self, *, active_only: bool = False) -> Sequence[EndpointResponse]:
         rows = await self._repo.get_all(active_only=active_only)
         return [_to_response(r) for r in rows]
 
@@ -161,8 +158,7 @@ class EndpointService:
             "deprecation_note",
         }
         changes: dict[str, object] = {
-            field: getattr(payload, field)
-            for field in payload.model_fields_set & _updatable
+            field: getattr(payload, field) for field in payload.model_fields_set & _updatable
         }
 
         # Always preserve an authentication path in the merged state: either a
@@ -182,14 +178,6 @@ class EndpointService:
 
         if "data_strategy" in payload.model_fields_set and payload.data_strategy is None:
             raise SnapshotConfigurationError("data_strategy cannot be null.")
-        effective_strategy = payload.data_strategy or obj.data_strategy
-        effective_param_schema: dict[str, ParamDescriptor] | dict[str, object]
-        if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
-            effective_param_schema = payload.param_schema
-        else:
-            effective_param_schema = obj.param_schema_json or {}
-        require_snapshot_defaults(effective_strategy, effective_param_schema)
-
         # Uniqueness check on name change
         if payload.name is not None and payload.name != obj.name:
             conflict = await self._repo.get_by_name(payload.name)
@@ -200,9 +188,7 @@ class EndpointService:
         if payload.path is not None and payload.path != obj.path:
             conflict = await self._repo.get_by_path(payload.path)
             if conflict:
-                raise ValueError(
-                    f"An endpoint with path '{payload.path}' already exists."
-                )
+                raise ValueError(f"An endpoint with path '{payload.path}' already exists.")
 
         # Handle param_schema serialization
         if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
@@ -227,9 +213,7 @@ class EndpointService:
         )
         return _to_response(obj)
 
-    async def delete_endpoint(
-        self, endpoint_id: uuid.UUID, *, actor: str = "system"
-    ) -> bool:
+    async def delete_endpoint(self, endpoint_id: uuid.UUID, *, actor: str = "system") -> bool:
         obj = await self._repo.get_by_id(endpoint_id)
         if obj is None:
             return False
@@ -245,9 +229,7 @@ class EndpointService:
         )
         return True
 
-    async def preview_sql(
-        self, payload: SqlPreviewRequest
-    ) -> SqlPreviewResponse:
+    async def preview_sql(self, payload: SqlPreviewRequest) -> SqlPreviewResponse:
         """Execute SQL in preview mode and return sample results."""
         if not self._conn_repo:
             raise ValueError("Connection repository not available for preview.")

@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -19,6 +20,17 @@ class JobRunRepository(BaseCrudRepository[JobRun]):
     """
 
     model = JobRun
+
+    async def get_by_schedule_and_scheduled_for(
+        self, schedule_id: uuid.UUID, scheduled_for: datetime
+    ) -> JobRun | None:
+        result = await self._db.execute(
+            select(JobRun).where(
+                JobRun.schedule_id == schedule_id,
+                JobRun.scheduled_for == scheduled_for,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def get_all(
         self,

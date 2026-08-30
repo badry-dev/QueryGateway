@@ -9,7 +9,6 @@ Public contract rules:
 
 import re
 import uuid
-from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal, Self
 
@@ -110,9 +109,7 @@ class ParamDescriptor(BaseModel):
             )
         )
         if configured_defaults > 1:
-            raise ValueError(
-                "Declare only one of default, default_is_null, or default_expression."
-            )
+            raise ValueError("Declare only one of default, default_is_null, or default_expression.")
         if self.default_is_null and self.required:
             raise ValueError("A NULL default is supported only for optional parameters.")
         if self.default_expression is not None and self.type != "date":
@@ -128,44 +125,6 @@ class ParamDescriptor(BaseModel):
                     f"Invalid default for parameter type '{self.type}'."
                 ) from exc
         return self
-
-
-def missing_snapshot_defaults(
-    param_schema: Mapping[str, object],
-) -> list[str]:
-    """Return snapshot bind names that cannot be resolved without a request."""
-    missing: list[str] = []
-    for name, raw_descriptor in param_schema.items():
-        if isinstance(raw_descriptor, ParamDescriptor):
-            descriptor = raw_descriptor
-        elif isinstance(raw_descriptor, dict):
-            descriptor = ParamDescriptor.model_validate(raw_descriptor)
-        else:
-            missing.append(name)
-            continue
-
-        if (
-            descriptor.default is None
-            and not descriptor.default_is_null
-            and descriptor.default_expression is None
-        ):
-            missing.append(name)
-    return sorted(missing)
-
-
-def require_snapshot_defaults(
-    data_strategy: DataStrategy,
-    param_schema: Mapping[str, object],
-) -> None:
-    """Reject snapshot endpoints whose binds require caller-supplied values."""
-    if data_strategy != DataStrategy.snapshot:
-        return
-    missing = missing_snapshot_defaults(param_schema)
-    if missing:
-        names = ", ".join(f":{name}" for name in missing)
-        raise SnapshotConfigurationError(
-            f"Snapshot endpoints require a default for every parameter. Missing: {names}."
-        )
 
 
 class EndpointCreate(BaseModel):
@@ -235,14 +194,9 @@ class EndpointCreate(BaseModel):
         undeclared = sql_params - schema_params
         unused = schema_params - sql_params
         if undeclared:
-            raise ValueError(
-                f"SQL references params not declared in schema: {sorted(undeclared)}"
-            )
+            raise ValueError(f"SQL references params not declared in schema: {sorted(undeclared)}")
         if unused:
-            raise ValueError(
-                f"Schema declares params not referenced in SQL: {sorted(unused)}"
-            )
-        require_snapshot_defaults(self.data_strategy, self.param_schema)
+            raise ValueError(f"Schema declares params not referenced in SQL: {sorted(unused)}")
         return self
 
 
@@ -307,9 +261,7 @@ class EndpointUpdate(BaseModel):
                     f"SQL references params not declared in schema: {sorted(undeclared)}"
                 )
             if unused:
-                raise ValueError(
-                    f"Schema declares params not referenced in SQL: {sorted(unused)}"
-                )
+                raise ValueError(f"Schema declares params not referenced in SQL: {sorted(unused)}")
         return self
 
     @model_validator(mode="after")
