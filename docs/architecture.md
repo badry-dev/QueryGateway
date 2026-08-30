@@ -23,8 +23,9 @@
 │  ┌───────────▼───────┐                  ┌─────────────▼──────┐ │
 │  │    PostgreSQL      │                  │  Oracle Database   │ │
 │  │  (app metadata,   │                  │  (user data source)│ │
-│  │   job store,      │                  │                    │ │
-│  │   snapshots)      │                  │  python-oracledb   │ │
+│  │   schedule defs,  │                  │                    │ │
+│  │   job history,    │                  │  python-oracledb   │ │
+│  │   snapshots)      │                  │                    │ │
 │  └───────────────────┘                  └────────────────────┘ │
 └───────────────────────────────────────────────────────────────────┘
 ```
