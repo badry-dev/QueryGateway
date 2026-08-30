@@ -169,24 +169,39 @@ Use the Docker images as a starting point. Key considerations:
 - Configure liveness and readiness probes:
 
 ```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: querygateway-api
 spec:
   replicas: 1
   strategy:
     type: Recreate
-
-livenessProbe:
-  httpGet:
-    path: /api/v1/admin/health/live
-    port: 8000
-  initialDelaySeconds: 10
-  periodSeconds: 30
-
-readinessProbe:
-  httpGet:
-    path: /api/v1/admin/health/ready
-    port: 8000
-  initialDelaySeconds: 5
-  periodSeconds: 10
+  selector:
+    matchLabels:
+      app: querygateway-api
+  template:
+    metadata:
+      labels:
+        app: querygateway-api
+    spec:
+      containers:
+        - name: api
+          image: your-registry/querygateway-api:latest
+          ports:
+            - containerPort: 8000
+          livenessProbe:
+            httpGet:
+              path: /api/v1/admin/health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/admin/health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
 ```
 
 ## Database Migrations
