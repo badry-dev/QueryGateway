@@ -24,3 +24,18 @@ def test_database_guard_rejects_any_non_test_signal(
 ) -> None:
     with pytest.raises(RuntimeError, match="APP_ENV must be 'test'"):
         _assert_safe_test_database(database_url, app_env)
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql+asyncpg://test_runner:pass@db:5432/customer_data",
+        "postgresql+asyncpg://user:pass@test-db:5432/customer_data",
+        "postgresql+asyncpg://user:pass@db:5432/customer_data?application_name=test",
+    ],
+)
+def test_database_guard_ignores_test_marker_outside_database_name(
+    database_url: str,
+) -> None:
+    with pytest.raises(RuntimeError, match="database name must contain 'test'"):
+        _assert_safe_test_database(database_url, "test")

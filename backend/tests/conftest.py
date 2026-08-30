@@ -49,6 +49,7 @@ from app.dependencies import get_db
 from app.main import app
 from app.models.base import Base
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -63,10 +64,11 @@ ADMIN_TEST_PASSWORD = "admin-password-do-not-use-in-prod"
 
 def _assert_safe_test_database(database_url: str, app_env: str) -> None:
     """Require both an explicit test environment and a test-named database."""
-    if app_env != "test" or "test" not in database_url.lower():
+    database_name = make_url(database_url).database or ""
+    if app_env != "test" or "test" not in database_name.lower():
         raise RuntimeError(
             "Refusing to run destructive test schema setup: APP_ENV must be "
-            "'test' and DATABASE_URL must contain 'test'."
+            "'test' and the parsed database name must contain 'test'."
         )
 
 
