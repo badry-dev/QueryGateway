@@ -4,6 +4,14 @@ import { Pause, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CronScheduleBuilder } from "@/components/schedules/CronScheduleBuilder";
+import {
+  buildCronExpression,
+  describeCronExpression,
+  INITIAL_CRON_BUILDER,
+  isValidCronExpression,
+  type CronBuilderValue,
+} from "@/components/schedules/cronSchedule";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +51,7 @@ export function SchedulesPage() {
     schedule_type: "interval",
     interval_seconds: 300,
   });
+  const [cronBuilder, setCronBuilder] = useState<CronBuilderValue>(INITIAL_CRON_BUILDER);
   const [createError, setCreateError] = useState("");
 
   const {
@@ -74,6 +83,7 @@ export function SchedulesPage() {
       setShowCreate(false);
       setCreateError("");
       setCreateForm({ endpoint_id: "", schedule_type: "interval", interval_seconds: 300 });
+      setCronBuilder(INITIAL_CRON_BUILDER);
     },
     onError: (err) => setCreateError(getApiError(err)),
   });
@@ -179,9 +189,16 @@ export function SchedulesPage() {
                       </Badge>
                     </td>
                     <td className="px-4 py-3 text-xs">
-                      {s.schedule_type === "cron"
-                        ? s.cron_expression
-                        : `Every ${s.interval_seconds}s`}
+                      {s.schedule_type === "cron" ? (
+                        <div>
+                          <p>{describeCronExpression(s.cron_expression)}</p>
+                          <code className="text-[11px] text-muted-foreground">
+                            {s.cron_expression}
+                          </code>
+                        </div>
+                      ) : (
+                        `Every ${s.interval_seconds}s`
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Badge variant={s.is_active ? "default" : "secondary"}>
@@ -273,8 +290,9 @@ export function SchedulesPage() {
               </Select>
             </div>
             <div>
-              <Label>Schedule Type</Label>
+              <Label htmlFor="schedule-type">Timing method</Label>
               <Select
+                id="schedule-type"
                 className="mt-1"
                 value={createForm.schedule_type}
                 onChange={(e) => {
@@ -282,13 +300,13 @@ export function SchedulesPage() {
                   setCreateForm((f) => ({
                     ...f,
                     schedule_type: v as "cron" | "interval",
-                    cron_expression: v === "cron" ? "0 */6 * * *" : undefined,
+                    cron_expression: v === "cron" ? buildCronExpression(cronBuilder) : undefined,
                     interval_seconds: v === "interval" ? 300 : undefined,
                   }));
                 }}
               >
-                <option value="interval">Interval</option>
-                <option value="cron">Cron</option>
+                <option value="interval">Repeat at an interval</option>
+                <option value="cron">Calendar schedule</option>
               </Select>
             </div>
             {createForm.schedule_type === "interval" && (
@@ -310,20 +328,16 @@ export function SchedulesPage() {
               </div>
             )}
             {createForm.schedule_type === "cron" && (
-              <div>
-                <Label>Cron Expression</Label>
-                <Input
-                  className="mt-1"
-                  value={createForm.cron_expression ?? ""}
-                  onChange={(e) =>
-                    setCreateForm((f) => ({ ...f, cron_expression: e.target.value }))
-                  }
-                  placeholder="0 */6 * * *"
-                />
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Standard 5-field cron: minute hour day month weekday
-                </p>
-              </div>
+              <CronScheduleBuilder
+                value={cronBuilder}
+                onChange={(value) => {
+                  setCronBuilder(value);
+                  setCreateForm((form) => ({
+                    ...form,
+                    cron_expression: buildCronExpression(value),
+                  }));
+                }}
+              />
             )}
           </div>
           <DialogFooter>
@@ -332,7 +346,12 @@ export function SchedulesPage() {
             </Button>
             <Button
               onClick={() => createMutation.mutate(createForm)}
-              disabled={createMutation.isPending || !createForm.endpoint_id}
+              disabled={
+                createMutation.isPending ||
+                !createForm.endpoint_id ||
+                (createForm.schedule_type === "cron" &&
+                  !isValidCronExpression(createForm.cron_expression ?? ""))
+              }
             >
               {createMutation.isPending ? "Creating..." : "Create"}
             </Button>
