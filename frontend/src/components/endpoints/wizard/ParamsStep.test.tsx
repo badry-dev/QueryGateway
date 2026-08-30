@@ -60,6 +60,30 @@ describe("ParamsStep", () => {
       fireEvent.change(screen.getByDisplayValue("hello"), { target: { value: "" } });
       expect(onUpdateParam).toHaveBeenCalledWith("q", "default", null);
     });
+
+    it("allows an optional string to explicitly pass SQL NULL", () => {
+      const onUpdateParam = vi.fn();
+      render(
+        <ParamsStep
+          state={makeState({
+            q: {
+              type: "string",
+              required: false,
+              default: null,
+              default_is_null: true,
+            },
+          })}
+          onUpdateParam={onUpdateParam}
+        />,
+      );
+
+      expect(screen.getByLabelText("Default mode for q")).toHaveValue("null");
+      expect(screen.getByText(/Passes SQL NULL/i)).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText("Default mode for q"), {
+        target: { value: "fixed" },
+      });
+      expect(onUpdateParam).toHaveBeenCalledWith("q", "default_is_null", false);
+    });
   });
 
   describe("integer type", () => {
@@ -195,6 +219,25 @@ describe("ParamsStep", () => {
         target: { value: "false" },
       });
       expect(onUpdateParam).toHaveBeenCalledWith("active", "default", false);
+    });
+
+    it("supports NULL as an optional boolean default", () => {
+      const onUpdateParam = vi.fn();
+      render(
+        <ParamsStep
+          state={makeState({
+            active: {
+              type: "boolean",
+              required: false,
+              default: null,
+              default_is_null: true,
+            },
+          })}
+          onUpdateParam={onUpdateParam}
+        />,
+      );
+
+      expect(screen.getByLabelText("Default value for active")).toHaveValue("null");
     });
   });
 

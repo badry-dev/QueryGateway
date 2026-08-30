@@ -183,6 +183,18 @@ def test_build_param_model_optional_without_default_accepts_value() -> None:
     assert instance.model_dump()["p"] == 42
 
 
+def test_build_param_model_explicit_null_default_binds_none() -> None:
+    Model = build_param_model({"p": {"type": "string", "required": False, "default_is_null": True}})
+    instance = Model.model_validate({})
+    assert instance.model_dump() == {"p": None}
+
+
+def test_build_param_model_explicit_value_overrides_null_default() -> None:
+    Model = build_param_model({"p": {"type": "string", "required": False, "default_is_null": True}})
+    instance = Model.model_validate({"p": "10105"})
+    assert instance.model_dump() == {"p": "10105"}
+
+
 def test_build_param_model_resolves_today_expression() -> None:
     Model = build_param_model(
         {"p": {"type": "date", "required": True, "default_expression": "today"}},

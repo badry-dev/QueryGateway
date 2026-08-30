@@ -79,6 +79,13 @@ class ParamDescriptor(BaseModel):
     )
     required: bool = True
     default: str | int | float | bool | None = None
+    default_is_null: bool = Field(
+        False,
+        description=(
+            "Use an explicit SQL NULL when this optional parameter is omitted. "
+            "This is distinct from having no configured default."
+        ),
+    )
     default_expression: Literal["today", "yesterday"] | None = Field(
         None,
         description=(
@@ -95,11 +102,22 @@ class ParamDescriptor(BaseModel):
 
     @model_validator(mode="after")
     def optional_must_have_default(self) -> Self:
-        if self.default is not None and self.default_expression is not None:
-            raise ValueError("Declare either default or default_expression, not both.")
+        configured_defaults = sum(
+            (
+                self.default is not None,
+                self.default_is_null,
+                self.default_expression is not None,
+            )
+        )
+        if configured_defaults > 1:
+            raise ValueError(
+                "Declare only one of default, default_is_null, or default_expression."
+            )
+        if self.default_is_null and self.required:
+            raise ValueError("A NULL default is supported only for optional parameters.")
         if self.default_expression is not None and self.type != "date":
             raise ValueError("default_expression is supported only for date parameters.")
-        if not self.required and self.default is None and self.default_expression is None:
+        if not self.required and configured_defaults == 0:
             raise ValueError("Optional parameters must declare a default value.")
         return self
 
@@ -118,7 +136,11 @@ def missing_snapshot_defaults(
             missing.append(name)
             continue
 
-        if descriptor.default is None and descriptor.default_expression is None:
+        if (
+            descriptor.default is None
+            and not descriptor.default_is_null
+            and descriptor.default_expression is None
+        ):
             missing.append(name)
     return sorted(missing)
 

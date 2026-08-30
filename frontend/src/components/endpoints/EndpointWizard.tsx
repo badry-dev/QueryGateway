@@ -22,7 +22,7 @@ import { ParamsStep } from "./wizard/ParamsStep";
 import { ReviewStep } from "./wizard/ReviewStep";
 import { SqlStep } from "./wizard/SqlStep";
 import { extractBindParams, reconcileParamSchema } from "./wizard/bindParams";
-import { missingSnapshotDefaults } from "./wizard/parameterDefaults";
+import { missingSnapshotDefaults, updateParameterDescriptor } from "./wizard/parameterDefaults";
 import {
   INITIAL_WIZARD_STATE,
   WIZARD_STEPS,
@@ -58,10 +58,16 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
         connection_id: state.connection_id,
         sql_text: state.sql_text,
         params: Object.fromEntries(
-          Object.entries(state.param_schema).map(([name, descriptor]) => [
-            name,
-            previewParams[name] ?? descriptor.default ?? "",
-          ]),
+          Object.entries(state.param_schema).map(([name, descriptor]) => {
+            const previewValue = previewParams[name];
+            const value =
+              previewValue !== undefined && previewValue.trim().length > 0
+                ? previewValue
+                : descriptor.default_is_null
+                  ? null
+                  : (descriptor.default ?? previewValue ?? "");
+            return [name, value];
+          }),
         ),
         max_rows: 10,
       }),
@@ -119,27 +125,15 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
     setState((s) => ({ ...s, ...patch }));
   }, []);
 
-  const updateParam = useCallback(
-    (name: string, field: keyof ParamDescriptor, value: unknown) => {
-      setState((s) => {
-        const descriptor = { ...s.param_schema[name], [field]: value };
-        if (field === "default" && value !== null && value !== undefined) {
-          descriptor.default_expression = null;
-        }
-        if (field === "default_expression" && value !== null && value !== undefined) {
-          descriptor.default = null;
-        }
-        if (field === "type" && value !== "date") {
-          descriptor.default_expression = null;
-        }
-        return {
-          ...s,
-          param_schema: { ...s.param_schema, [name]: descriptor },
-        };
-      });
-    },
-    [],
-  );
+  const updateParam = useCallback((name: string, field: keyof ParamDescriptor, value: unknown) => {
+    setState((s) => {
+      const descriptor = updateParameterDescriptor(s.param_schema[name], field, value);
+      return {
+        ...s,
+        param_schema: { ...s.param_schema, [name]: descriptor },
+      };
+    });
+  }, []);
 
   const canNext = (): boolean => {
     if (step === 0) return !!state.connection_id;
@@ -150,7 +144,8 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
       // an invalid configuration.
       const authOk = !!state.auth_method_id || state.allow_unauthenticated;
       const snapshotDefaultsOk =
-        state.data_strategy !== "snapshot" || missingSnapshotDefaults(state.param_schema).length === 0;
+        state.data_strategy !== "snapshot" ||
+        missingSnapshotDefaults(state.param_schema).length === 0;
       return !!state.name.trim() && !!state.path.trim() && authOk && snapshotDefaultsOk;
     }
     return true;

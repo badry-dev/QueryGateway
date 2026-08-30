@@ -28,7 +28,9 @@ export function SqlStep({
   const bindParams = Object.entries(state.param_schema);
   const hasPreviewValues = bindParams.every(([name, descriptor]) => {
     const value = previewParams[name];
-    return value !== undefined ? value.trim().length > 0 : descriptor.default != null;
+    return value !== undefined && value.trim().length > 0
+      ? true
+      : descriptor.default_is_null === true || descriptor.default != null;
   });
 
   return (

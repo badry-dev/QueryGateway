@@ -47,6 +47,12 @@ def get_scheduler() -> Any:
     return _scheduler
 
 
+def resolve_scheduled_params(param_schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve every scheduled bind default, retaining explicit SQL NULLs."""
+    ParamModel = build_param_model(param_schema)
+    return ParamModel.model_validate({}).model_dump()
+
+
 async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
     """Execute a single scheduled job — query Oracle, save snapshot.
 
@@ -100,8 +106,10 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             # resolve every configured static or dynamic default through the
             # same typed model used by live data requests.
             param_schema = endpoint.param_schema_json or {}
-            ParamModel = build_param_model(param_schema)
-            params = ParamModel.model_validate({}).model_dump(exclude_none=True)
+            # Keep explicit NULL defaults in the bind dictionary. Omitting a
+            # None-valued entry makes Oracle see a missing bind variable rather
+            # than a bind whose value is SQL NULL.
+            params = resolve_scheduled_params(param_schema)
 
             columns, rows, duration_ms = await execute_query(
                 connection=connection,

@@ -108,6 +108,17 @@ def test_static_and_dynamic_defaults_are_mutually_exclusive() -> None:
         )
 
 
+def test_optional_parameter_accepts_explicit_null_default() -> None:
+    descriptor = ParamDescriptor(type="string", required=False, default_is_null=True)
+    assert descriptor.default_is_null is True
+    assert descriptor.default is None
+
+
+def test_required_parameter_rejects_explicit_null_default() -> None:
+    with pytest.raises(ValueError, match="only for optional parameters"):
+        ParamDescriptor(type="string", required=True, default_is_null=True)
+
+
 def test_snapshot_endpoint_requires_defaults_for_all_parameters() -> None:
     with pytest.raises(ValueError, match=r"Missing: :end_date, :start_date"):
         EndpointCreate(
@@ -146,6 +157,25 @@ def test_snapshot_endpoint_accepts_dynamic_defaults() -> None:
         data_strategy="snapshot",
     )
     assert payload.param_schema["start_date"].default_expression == "yesterday"
+
+
+def test_snapshot_endpoint_accepts_explicit_null_default() -> None:
+    payload = EndpointCreate(
+        name="snapshot-with-null-default",
+        path="snapshot-with-null-default",
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT * FROM stores WHERE :str_id IS NULL OR id = :str_id",
+        param_schema={
+            "str_id": {
+                "type": "string",
+                "required": False,
+                "default_is_null": True,
+            }
+        },
+        allow_unauthenticated=True,
+        data_strategy="snapshot",
+    )
+    assert payload.param_schema["str_id"].default_is_null is True
 
 
 def test_parameterless_snapshot_endpoint_is_valid() -> None:

@@ -4,6 +4,7 @@ import {
   describeParameterDefault,
   hasParameterDefault,
   missingSnapshotDefaults,
+  updateParameterDescriptor,
 } from "./parameterDefaults";
 
 describe("parameter default helpers", () => {
@@ -16,6 +17,13 @@ describe("parameter default helpers", () => {
         type: "date",
         required: true,
         default_expression: "today",
+      }),
+    ).toBe(true);
+    expect(
+      hasParameterDefault({
+        type: "string",
+        required: false,
+        default_is_null: true,
       }),
     ).toBe(true);
   });
@@ -37,5 +45,29 @@ describe("parameter default helpers", () => {
         default_expression: "today",
       }),
     ).toBe("Today (server date)");
+  });
+
+  it("describes an explicit null default", () => {
+    expect(
+      describeParameterDefault({
+        type: "string",
+        required: false,
+        default_is_null: true,
+      }),
+    ).toBe("NULL");
+  });
+
+  it("turns an empty optional default into an explicit null bind", () => {
+    const descriptor = updateParameterDescriptor(
+      { type: "string", required: true, default: null },
+      "required",
+      false,
+    );
+
+    expect(descriptor).toMatchObject({
+      required: false,
+      default: null,
+      default_is_null: true,
+    });
   });
 });

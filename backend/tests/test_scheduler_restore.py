@@ -8,6 +8,22 @@ from unittest.mock import MagicMock
 import pytest
 
 
+def test_scheduled_params_retain_explicit_null_bind() -> None:
+    from app.services.scheduler import resolve_scheduled_params
+
+    params = resolve_scheduled_params(
+        {
+            "str_id": {
+                "type": "string",
+                "required": False,
+                "default_is_null": True,
+            }
+        }
+    )
+
+    assert params == {"str_id": None}
+
+
 @pytest.mark.asyncio
 async def test_restore_active_schedules_registers_each_row(
     monkeypatch: pytest.MonkeyPatch,
