@@ -61,7 +61,7 @@ Define connection ─▶ Author SQL (with :bind params) ─▶ Attach auth ─�
 ```
 
 1. **Connect** to your Oracle database with securely stored, encrypted credentials.
-2. **Author** a `SELECT` query using named bind parameters (`:param_name`) in a rich SQL editor, and preview the results.
+2. **Author** a `SELECT` query using named bind parameters (`:param_name`) in a rich SQL editor. The wizard detects parameters as you type and requests temporary sample values before previewing the results.
 3. **Secure** the endpoint by attaching a Bearer token, Basic Auth, or API key policy.
 4. **Choose** a data strategy: serve results **live** on each request, or from a **scheduled snapshot** cache.
 5. **Publish** a versioned endpoint under `/api/v1/data/*` that resolves dynamically — no service restart needed.
@@ -73,7 +73,7 @@ QueryGateway is organized into five admin modules, all driven from the React adm
 | Module | What it does |
 |--------|--------------|
 | **Connections** | Create, edit, test, and delete Oracle database connections. Credentials are encrypted at rest; pool sizing and timeouts are configurable. Uses `python-oracledb`; thin mode needs no native client, while the backend Docker image includes Oracle Instant Client 19.32 for thick mode. |
-| **API Creation Wizard** | A multi-step wizard that turns a parameterized SQL query into a deployable GET endpoint: pick a connection, author SQL with a rich editor, preview sample rows and inferred schema, map/rename output columns, attach an auth method, and select a data strategy. |
+| **API Creation Wizard** | A multi-step wizard that turns a parameterized SQL query into a deployable GET endpoint: pick a connection, author SQL with a rich editor, supply preview-only sample values for detected bind parameters, preview sample rows and inferred schema, map/rename output columns, attach an auth method, and select a data strategy. |
 | **Authentication** | Manage per-endpoint auth methods — Bearer token (JWT), Basic Auth, and API key. Tokens are issued/verified with `PyJWT`; credentials are hashed with `bcrypt`. When an auth method is attached to an endpoint, middleware enforces it on every request; endpoints with no auth method attached are served publicly. |
 | **Scheduling & Snapshots** | Schedule query refreshes with the in-process APScheduler (cron or interval). Run now, pause/resume, and enable/disable jobs. Results are cached as PostgreSQL JSONB snapshots and served with freshness metadata. Schedule definitions are persisted in the app database; the active APScheduler jobs run in-memory and are (re)registered when a schedule is created, updated, or resumed. |
 | **Settings & Health** | Configure runtime settings (base URL/port, logging level, query timeouts, CORS/rate-limit inputs) and view a health dashboard covering API, PostgreSQL, Oracle connectivity, scheduler status, and recent job outcomes. |

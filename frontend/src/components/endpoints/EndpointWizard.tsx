@@ -21,6 +21,7 @@ import { ConnectionStep } from "./wizard/ConnectionStep";
 import { ParamsStep } from "./wizard/ParamsStep";
 import { ReviewStep } from "./wizard/ReviewStep";
 import { SqlStep } from "./wizard/SqlStep";
+import { extractBindParams, reconcileParamSchema } from "./wizard/bindParams";
 import {
   INITIAL_WIZARD_STATE,
   WIZARD_STEPS,
@@ -38,6 +39,7 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
   const [state, setState] = useState<WizardState>(INITIAL_WIZARD_STATE);
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<SqlPreviewResponse | null>(null);
+  const [previewParams, setPreviewParams] = useState<Record<string, string>>({});
 
   const { data: connections = [] } = useQuery({
     queryKey: queryKeys.connections.list(true),
@@ -55,7 +57,10 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
         connection_id: state.connection_id,
         sql_text: state.sql_text,
         params: Object.fromEntries(
-          Object.entries(state.param_schema).map(([k, v]) => [k, v.default ?? ""]),
+          Object.entries(state.param_schema).map(([name, descriptor]) => [
+            name,
+            previewParams[name] ?? descriptor.default ?? "",
+          ]),
         ),
         max_rows: 10,
       }),
@@ -89,10 +94,29 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
     onError: (err) => setError(getApiError(err)),
   });
 
-  const update = useCallback(
-    (patch: Partial<WizardState>) => setState((s) => ({ ...s, ...patch })),
-    [],
-  );
+  const update = useCallback((patch: Partial<WizardState>) => {
+    if (patch.sql_text !== undefined) {
+      const bindParams = extractBindParams(patch.sql_text);
+
+      setState((s) => ({
+        ...s,
+        ...patch,
+        param_schema: reconcileParamSchema(patch.sql_text ?? "", s.param_schema),
+      }));
+      setPreviewParams((current) =>
+        Object.fromEntries(
+          bindParams
+            .filter((name) => current[name] !== undefined)
+            .map((name) => [name, current[name]]),
+        ),
+      );
+      setPreview(null);
+      return;
+    }
+
+    if (patch.connection_id !== undefined) setPreview(null);
+    setState((s) => ({ ...s, ...patch }));
+  }, []);
 
   const updateParam = useCallback((name: string, field: keyof ParamDescriptor, value: unknown) => {
     setState((s) => ({
@@ -174,8 +198,12 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
           state={state}
           update={update}
           preview={preview}
+          previewParams={previewParams}
           isPreviewing={previewMutation.isPending}
           onPreview={() => previewMutation.mutate()}
+          onUpdatePreviewParam={(name, value) =>
+            setPreviewParams((current) => ({ ...current, [name]: value }))
+          }
         />
       )}
       {currentStep === "Parameters" && <ParamsStep state={state} onUpdateParam={updateParam} />}
