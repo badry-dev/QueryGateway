@@ -271,6 +271,14 @@ async def test_legacy_public_endpoint_requires_platform_authentication(
     authenticated = await admin.get(f"/api/v1/data/{ep_path}")
     assert authenticated.status_code == 503
 
+    authorization = admin.headers["Authorization"]
+    token = authorization.removeprefix("Bearer ")
+    whitespace_authenticated = await unauth_client.get(
+        f"/api/v1/data/{ep_path}",
+        headers={"Authorization": f"Bearer   {token}  "},
+    )
+    assert whitespace_authenticated.status_code == 503
+
 
 @pytest.mark.integration
 async def test_deleting_auth_method_default_denies_endpoint(

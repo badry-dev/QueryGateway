@@ -145,7 +145,7 @@ class DataService:
         if authorization.lower().startswith("bearer "):
             credentials = HTTPAuthorizationCredentials(
                 scheme="Bearer",
-                credentials=authorization[7:],
+                credentials=authorization[7:].strip(),
             )
 
         try:

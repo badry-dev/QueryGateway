@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import structlog
+from pydantic import ValidationError
 
 from app.models.endpoint import ApiEndpoint, DataStrategy
 from app.repositories.connection import ConnectionRepository
@@ -42,7 +43,12 @@ def _to_response(obj: ApiEndpoint) -> EndpointResponse:
     if obj.param_schema_json:
         for k, v in obj.param_schema_json.items():
             if isinstance(v, dict):
-                param_schema[k] = ParamDescriptor(**v)
+                try:
+                    param_schema[k] = ParamDescriptor(**v)
+                except ValidationError as exc:
+                    raise SnapshotConfigurationError(
+                        "Endpoint has an invalid parameter schema."
+                    ) from exc
 
     column_map: dict[str, str] = {}
     if obj.column_map_json:

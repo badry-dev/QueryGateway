@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from app.schemas.endpoint import ParamDescriptor
 from app.schemas.schedule import (
     ScheduleParameterBinding,
     ScheduleRunPreview,
@@ -38,6 +39,20 @@ def _normalise_bindings(
         )
         for name, binding in bindings.items()
     }
+
+
+def _normalise_param_schema(param_schema: dict[str, Any]) -> dict[str, ParamDescriptor]:
+    try:
+        return {
+            name: (
+                descriptor
+                if isinstance(descriptor, ParamDescriptor)
+                else ParamDescriptor.model_validate(descriptor)
+            )
+            for name, descriptor in param_schema.items()
+        }
+    except ValidationError as exc:
+        raise ScheduleBindingError("Endpoint has an invalid parameter schema.") from exc
 
 
 def _resolve_window(logical_date: date, window: ScheduleWindow) -> tuple[date, date]:
@@ -75,8 +90,9 @@ def resolve_schedule_parameters(
     if scheduled_for.tzinfo is None:
         raise ScheduleBindingError("scheduled_for must include a timezone.")
 
+    descriptors = _normalise_param_schema(param_schema)
     bindings = _normalise_bindings(parameter_bindings)
-    expected = set(param_schema)
+    expected = set(descriptors)
     supplied = set(bindings)
     missing = sorted(expected - supplied)
     unknown = sorted(supplied - expected)
@@ -108,11 +124,9 @@ def resolve_schedule_parameters(
 
     raw_parameters: dict[str, object] = {}
     for name, binding in bindings.items():
-        descriptor = param_schema.get(name)
-        if not isinstance(descriptor, dict):
-            raise ScheduleBindingError(f"Invalid parameter descriptor for :{name}.")
-        param_type = descriptor.get("type", "string")
-        is_required = bool(descriptor.get("required", True))
+        descriptor = descriptors[name]
+        param_type = descriptor.type
+        is_required = descriptor.required
 
         if binding.source == "null":
             if is_required:
@@ -144,7 +158,9 @@ def resolve_schedule_parameters(
             raw_parameters[name] = window_end
 
     try:
-        ParamModel = build_param_model(param_schema)
+        ParamModel = build_param_model(
+            {name: descriptor.model_dump() for name, descriptor in descriptors.items()}
+        )
         parameters = ParamModel.model_validate(raw_parameters).model_dump()
     except (ValidationError, ValueError) as exc:
         raise ScheduleBindingError(f"Invalid resolved schedule parameters: {exc}") from exc
