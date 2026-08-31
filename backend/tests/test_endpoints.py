@@ -590,7 +590,7 @@ async def test_update_snapshot_with_invalid_stored_schema_returns_422(
             }
         )
     )
-    await session.commit()
+    await session.flush()
     session.expire_all()
 
     response = await client.put(
