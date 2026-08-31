@@ -30,7 +30,7 @@ class Snapshot(UUIDPrimaryKeyMixin, Base):
     )
 
     # Full query result stored as a JSON array of row objects.
-    data: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    data: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

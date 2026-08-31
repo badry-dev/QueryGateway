@@ -479,8 +479,12 @@ async def test_omitted_optional_filter_requires_a_null_resolved_snapshot(
     endpoint = (
         await db_session.execute(select(ApiEndpoint).where(ApiEndpoint.path == path))
     ).scalar_one()
-    store_descriptor = dict(endpoint.param_schema_json["store_id"])
-    store_mapping = dict(store_descriptor["snapshot_filter"])
+    stored_descriptor = endpoint.param_schema_json["store_id"]
+    assert isinstance(stored_descriptor, dict)
+    store_descriptor = dict(stored_descriptor)
+    stored_mapping = store_descriptor["snapshot_filter"]
+    assert isinstance(stored_mapping, dict)
+    store_mapping = dict(stored_mapping)
     store_mapping["null_means_all"] = False
     store_descriptor["snapshot_filter"] = store_mapping
     endpoint.param_schema_json = {
