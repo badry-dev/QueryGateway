@@ -137,17 +137,24 @@ def validate_snapshot_parameter_ranges(
     request_params: dict[str, object],
 ) -> None:
     """Reject an inclusive lower bound that is later than its upper bound."""
-    bounds: dict[str, dict[str, Any]] = {}
+    bounds: dict[str, dict[str, list[Any]]] = {}
     for item in filters:
         if item.operator not in {"gte", "lte"}:
             continue
         value = request_params.get(item.parameter)
         if value is not None:
-            bounds.setdefault(item.column, {})[item.operator] = value
+            bounds.setdefault(item.column, {}).setdefault(item.operator, []).append(value)
 
     for column, values in bounds.items():
-        lower = values.get("gte")
-        upper = values.get("lte")
+        lower_values = values.get("gte", [])
+        upper_values = values.get("lte", [])
+        try:
+            lower = max(lower_values) if lower_values else None
+            upper = min(upper_values) if upper_values else None
+        except TypeError as exc:
+            raise ValueError(
+                f"Snapshot filter bounds have incompatible types for '{column}'."
+            ) from exc
         if lower is not None and upper is not None:
             try:
                 reversed_range = lower > upper

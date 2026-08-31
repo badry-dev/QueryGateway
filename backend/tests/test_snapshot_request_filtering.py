@@ -10,6 +10,10 @@ from app.models.job_run import JobRun, JobRunStatus
 from app.models.snapshot import Snapshot
 from app.repositories.job_run import JobRunRepository
 from app.schemas.endpoint import EndpointCreate, ParamDescriptor
+from app.services.snapshot_filtering import (
+    compile_snapshot_filters,
+    validate_snapshot_parameter_ranges,
+)
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,6 +103,31 @@ def test_snapshot_range_mappings_require_matching_parameter_types() -> None:
             },
             allow_unauthenticated=True,
             data_strategy="snapshot",
+        )
+
+
+def test_snapshot_range_validation_retains_duplicate_directional_bounds() -> None:
+    filters = compile_snapshot_filters(
+        {
+            "strict_start": {
+                "type": "integer",
+                "snapshot_filter": {"column": "sequence", "operator": "gte"},
+            },
+            "loose_start": {
+                "type": "integer",
+                "snapshot_filter": {"column": "sequence", "operator": "gte"},
+            },
+            "end": {
+                "type": "integer",
+                "snapshot_filter": {"column": "sequence", "operator": "lte"},
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="lower bound exceeds upper bound"):
+        validate_snapshot_parameter_ranges(
+            filters=filters,
+            request_params={"strict_start": 10, "loose_start": 5, "end": 7},
         )
 
 
