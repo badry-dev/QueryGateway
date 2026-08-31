@@ -9,7 +9,7 @@ import type {
   ScheduleWindowPreset,
 } from "@/types/schedule";
 
-import { bindingsUseWindow } from "./scheduleBindings";
+import { bindingsUseWindow, parseScheduleNumericLiteral } from "./scheduleBindings";
 
 interface ScheduleParameterBindingsProps {
   paramSchema: Record<string, ParamDescriptor>;
@@ -180,9 +180,7 @@ export function ScheduleParameterBindings({
                       const raw = event.target.value;
                       const value =
                         descriptor.type === "integer" || descriptor.type === "float"
-                          ? raw === ""
-                            ? ""
-                            : Number(raw)
+                          ? parseScheduleNumericLiteral(raw, descriptor.type)
                           : raw;
                       updateBinding(name, { source: "literal", value });
                     }}

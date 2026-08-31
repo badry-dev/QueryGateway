@@ -53,4 +53,38 @@ describe("schedule binding helpers", () => {
     expect(scheduleBindingsComplete(schema, bindings, undefined)).toBe(false);
     expect(scheduleBindingsComplete(schema, bindings, { preset: "previous_day" })).toBe(true);
   });
+
+  it("rejects invalid numeric literal bindings", () => {
+    const schema: Record<string, ParamDescriptor> = {
+      limit: { type: "integer", required: true },
+      ratio: { type: "float", required: true },
+    };
+    const valid: Record<string, ScheduleParameterBinding> = {
+      limit: { source: "literal", value: 25 },
+      ratio: { source: "literal", value: 1.5 },
+    };
+
+    expect(scheduleBindingsComplete(schema, valid, undefined)).toBe(true);
+    expect(
+      scheduleBindingsComplete(
+        schema,
+        { ...valid, limit: { source: "literal", value: Number.NaN } },
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      scheduleBindingsComplete(
+        schema,
+        { ...valid, limit: { source: "literal", value: 1.5 } },
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      scheduleBindingsComplete(
+        schema,
+        { ...valid, ratio: { source: "literal", value: Number.POSITIVE_INFINITY } },
+        undefined,
+      ),
+    ).toBe(false);
+  });
 });

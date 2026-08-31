@@ -65,4 +65,46 @@ describe("ScheduleParameterBindings", () => {
       days: 7,
     });
   });
+
+  it("emits only valid finite numeric literal values", () => {
+    const onBindingsChange = vi.fn();
+    render(
+      <ScheduleParameterBindings
+        paramSchema={{
+          limit: { type: "integer", required: true },
+          ratio: { type: "float", required: true },
+        }}
+        bindings={{
+          limit: { source: "literal", value: "" },
+          ratio: { source: "literal", value: "" },
+        }}
+        onBindingsChange={onBindingsChange}
+        onWindowChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Fixed value for limit"), {
+      target: { value: "1.5" },
+    });
+    expect(onBindingsChange).toHaveBeenLastCalledWith({
+      limit: { source: "literal", value: "" },
+      ratio: { source: "literal", value: "" },
+    });
+
+    fireEvent.change(screen.getByLabelText("Fixed value for ratio"), {
+      target: { value: "not-a-number" },
+    });
+    expect(onBindingsChange).toHaveBeenLastCalledWith({
+      limit: { source: "literal", value: "" },
+      ratio: { source: "literal", value: "" },
+    });
+
+    fireEvent.change(screen.getByLabelText("Fixed value for ratio"), {
+      target: { value: "1.5" },
+    });
+    expect(onBindingsChange).toHaveBeenLastCalledWith({
+      limit: { source: "literal", value: "" },
+      ratio: { source: "literal", value: 1.5 },
+    });
+  });
 });

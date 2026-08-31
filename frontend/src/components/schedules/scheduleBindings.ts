@@ -1,6 +1,18 @@
 import type { ParamDescriptor } from "@/types/endpoint";
 import type { ScheduleParameterBinding, ScheduleWindow } from "@/types/schedule";
 
+const DECIMAL_LITERAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+export function parseScheduleNumericLiteral(raw: string, type: "integer" | "float"): number | "" {
+  const candidate = raw.trim();
+  if (!DECIMAL_LITERAL.test(candidate)) return "";
+
+  const value = Number(candidate);
+  if (!Number.isFinite(value)) return "";
+  if (type === "integer" && !Number.isInteger(value)) return "";
+  return value;
+}
+
 export function suggestScheduleBindings(
   paramSchema: Record<string, ParamDescriptor>,
 ): Record<string, ScheduleParameterBinding> {
@@ -42,6 +54,17 @@ export function scheduleBindingsComplete(
     if (binding.source === "literal") {
       if (binding.value === null || binding.value === undefined) return false;
       if (descriptor.type !== "string" && binding.value === "") return false;
+      if (descriptor.type === "integer" || descriptor.type === "float") {
+        if (typeof binding.value === "number") {
+          if (!Number.isFinite(binding.value)) return false;
+          if (descriptor.type === "integer" && !Number.isInteger(binding.value)) return false;
+        } else if (
+          typeof binding.value !== "string" ||
+          parseScheduleNumericLiteral(binding.value, descriptor.type) === ""
+        ) {
+          return false;
+        }
+      }
     }
     if (binding.source === "relative_date" && binding.offset_days == null) return false;
     return true;
