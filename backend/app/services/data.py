@@ -41,6 +41,7 @@ from app.repositories.snapshot import SnapshotRepository
 from app.schemas.endpoint import SnapshotConfigurationError, require_snapshot_filter_mappings
 from app.services.auth_method import AuthMethodService
 from app.services.snapshot_filtering import (
+    compile_snapshot_filters,
     filter_snapshot_rows,
     snapshot_covers_request,
     unavailable_snapshot_filter_columns,
@@ -130,7 +131,13 @@ class DataService:
             principal = await self._enforce_platform_auth(request, endpoint, started_at, path)
 
         if endpoint.data_strategy.value == "snapshot":
-            response = await self._serve_snapshot(endpoint, request, path, principal)
+            response = await self._serve_snapshot(
+                endpoint,
+                request,
+                path,
+                principal,
+                started_at,
+            )
         else:
             response = await self._serve_live(endpoint, request, path, principal)
 
@@ -281,6 +288,7 @@ class DataService:
         request: Request,
         path: str,
         principal: str | None,
+        started_at: float,
     ) -> JSONResponse:
         try:
             params = self._coerce_params(endpoint, request)
@@ -291,6 +299,14 @@ class DataService:
         try:
             require_snapshot_filter_mappings(endpoint.data_strategy, param_schema)
         except SnapshotConfigurationError:
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="snapshot_filter_not_configured",
+            )
             return JSONResponse(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={
@@ -298,12 +314,21 @@ class DataService:
                     "detail": ("Snapshot request filtering is not configured for every parameter."),
                 },
             )
+        filters = compile_snapshot_filters(param_schema)
         try:
             validate_snapshot_parameter_ranges(
-                param_schema=param_schema,
+                filters=filters,
                 request_params=params,
             )
         except ValueError:
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="invalid_snapshot_parameter_range",
+            )
             return JSONResponse(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={
@@ -323,13 +348,21 @@ class DataService:
         if not param_schema:
             snapshot = snapshots[0]
         else:
-            job_runs = JobRunRepository(self._db)
+            candidate_run_ids = list(
+                dict.fromkeys(
+                    candidate.job_run_id
+                    for candidate in snapshots
+                    if candidate.job_run_id is not None
+                )
+            )
+            job_runs = await JobRunRepository(self._db).get_by_ids(candidate_run_ids)
+            job_runs_by_id = {job_run.id: job_run for job_run in job_runs}
             for candidate in snapshots:
                 if candidate.job_run_id is None:
                     continue
-                job_run = await job_runs.get_by_id(candidate.job_run_id)
+                job_run = job_runs_by_id.get(candidate.job_run_id)
                 if job_run is not None and snapshot_covers_request(
-                    param_schema=param_schema,
+                    filters=filters,
                     request_params=params,
                     resolved_params=job_run.resolved_params_json or {},
                 ):
@@ -337,6 +370,14 @@ class DataService:
                     break
 
         if snapshot is None:
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="snapshot_out_of_coverage",
+            )
             return JSONResponse(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={
@@ -350,8 +391,16 @@ class DataService:
         )
         if unavailable_snapshot_filter_columns(
             rows=snapshot_data,
-            param_schema=param_schema,
+            filters=filters,
         ):
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="snapshot_filter_column_unavailable",
+            )
             return JSONResponse(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={
@@ -361,7 +410,7 @@ class DataService:
             )
         filtered_data = filter_snapshot_rows(
             rows=snapshot_data,
-            param_schema=param_schema,
+            filters=filters,
             request_params=params,
         )
         return JSONResponse(
@@ -378,6 +427,29 @@ class DataService:
                 },
             },
             headers=_deprecation_headers(endpoint),
+        )
+
+    @staticmethod
+    def _log_snapshot_rejection(
+        *,
+        request: Request,
+        endpoint: ApiEndpoint,
+        path: str,
+        principal: str | None,
+        started_at: float,
+        event: str,
+    ) -> None:
+        """Emit the required request context before a snapshot HTTP 422 response."""
+        log.warning(
+            event,
+            request_id=resolve_request_id(request),
+            user=principal or "anonymous",
+            endpoint=path,
+            endpoint_id=str(endpoint.id),
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            method=request.method,
+            client_ip=request.client.host if request.client else None,
         )
 
     # ── Live mode ───────────────────────────────────────────────────────────

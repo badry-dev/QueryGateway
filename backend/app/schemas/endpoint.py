@@ -165,11 +165,12 @@ def require_snapshot_filter_mappings(
     data_strategy: DataStrategy,
     param_schema: dict[str, ParamDescriptor] | dict[str, object],
 ) -> None:
-    """Require every snapshot request parameter to have explicit row semantics."""
+    """Require complete mappings and compatible paired range-filter types."""
     if data_strategy != DataStrategy.snapshot or not param_schema:
         return
 
     missing: list[str] = []
+    parsed_descriptors: dict[str, ParamDescriptor] = {}
     for name, descriptor in param_schema.items():
         try:
             parsed = (
@@ -179,6 +180,7 @@ def require_snapshot_filter_mappings(
             )
         except ValidationError as exc:
             raise SnapshotConfigurationError("Endpoint has an invalid parameter schema.") from exc
+        parsed_descriptors[name] = parsed
         if parsed.snapshot_filter is None:
             missing.append(name)
 
@@ -187,6 +189,24 @@ def require_snapshot_filter_mappings(
         raise SnapshotConfigurationError(
             f"Snapshot endpoints require explicit snapshot filter mappings for: {names}."
         )
+
+    range_types: dict[str, dict[str, set[str]]] = {}
+    for descriptor in parsed_descriptors.values():
+        mapping = descriptor.snapshot_filter
+        if mapping is None or mapping.operator not in {"gte", "lte"}:
+            continue
+        range_types.setdefault(mapping.column, {}).setdefault(mapping.operator, set()).add(
+            descriptor.type
+        )
+
+    for column, bounds in range_types.items():
+        if "gte" not in bounds or "lte" not in bounds:
+            continue
+        if len(bounds["gte"] | bounds["lte"]) > 1:
+            raise SnapshotConfigurationError(
+                "Snapshot lower and upper bounds for "
+                f"'{column}' must use the same declared parameter type."
+            )
 
 
 class EndpointCreate(BaseModel):

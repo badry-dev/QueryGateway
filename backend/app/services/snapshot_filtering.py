@@ -1,6 +1,9 @@
 """Typed request filtering for persisted snapshot rows."""
 
+import json
 from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
@@ -18,13 +21,37 @@ class CompiledSnapshotFilter:
     column: str
     operator: SnapshotFilterOperator
     null_means_all: bool
+    param_type: str
+    coercion_key: str
     value_model: type[BaseModel]
 
     def coerce_value(self, value: object) -> Any:
-        return self.value_model.model_validate({self.parameter: value}).model_dump()[self.parameter]
+        """Coerce one scheduled or cached value using the parameter's declared type."""
+        return self.value_model.model_validate({"value": value}).model_dump()["value"]
 
 
-def _compile_filters(param_schema: dict[str, object]) -> list[CompiledSnapshotFilter]:
+def _coercion_descriptor(descriptor: dict[str, object]) -> dict[str, object]:
+    """Return only descriptor fields that affect validation of a supplied value."""
+    coercion_descriptor: dict[str, object] = {
+        "type": descriptor.get("type", "string"),
+        "required": True,
+    }
+    if "max_length" in descriptor:
+        coercion_descriptor["max_length"] = descriptor["max_length"]
+    return coercion_descriptor
+
+
+@lru_cache(maxsize=256)
+def _cached_value_model(coercion_key: str) -> type[BaseModel]:
+    """Build each distinct snapshot value model once per process."""
+    descriptor = json.loads(coercion_key)
+    return build_param_model({"value": descriptor}, enforce_required=True)
+
+
+def compile_snapshot_filters(
+    param_schema: dict[str, object],
+) -> tuple[CompiledSnapshotFilter, ...]:
+    """Compile persisted filter mappings once for one snapshot request."""
     compiled: list[CompiledSnapshotFilter] = []
     for name, descriptor in param_schema.items():
         if not isinstance(descriptor, dict):
@@ -36,34 +63,50 @@ def _compile_filters(param_schema: dict[str, object]) -> list[CompiledSnapshotFi
         operator = mapping.get("operator")
         if not isinstance(column, str) or operator not in {"eq", "gte", "lte"}:
             continue
+        coercion_key = json.dumps(
+            _coercion_descriptor(descriptor),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         compiled.append(
             CompiledSnapshotFilter(
                 parameter=name,
                 column=column,
                 operator=operator,
                 null_means_all=mapping.get("null_means_all") is True,
-                value_model=build_param_model({name: descriptor}, enforce_required=True),
+                param_type=str(descriptor.get("type", "string")),
+                coercion_key=coercion_key,
+                value_model=_cached_value_model(coercion_key),
             )
         )
-    return compiled
+    return tuple(compiled)
+
+
+def _coerce_cached_row_value(item: CompiledSnapshotFilter, value: object) -> Any:
+    """Normalize Oracle DATE/TIMESTAMP strings before typed comparison."""
+    if item.param_type == "date" and isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value).date()
+        except ValueError:
+            # The shared date coercer still accepts the documented DD-MM-YYYY form.
+            pass
+    return item.coerce_value(value)
 
 
 def snapshot_covers_request(
     *,
-    param_schema: dict[str, object],
+    filters: tuple[CompiledSnapshotFilter, ...],
     request_params: dict[str, object],
     resolved_params: dict[str, object],
 ) -> bool:
     """Return whether one snapshot job run contains the requested selection."""
-    for item in _compile_filters(param_schema):
+    for item in filters:
         requested = request_params.get(item.parameter)
         if requested is None:
-            # When SQL NULL explicitly means "all values", an omitted public
-            # filter also asks for all values. A fixed-value schedule run is
-            # only a subset and cannot satisfy that request.
-            if item.null_means_all and (
-                item.parameter not in resolved_params or resolved_params[item.parameter] is not None
-            ):
+            # An omitted optional request is the same SQL NULL input used by a
+            # scheduled run. A fixed-value run is only a subset regardless of
+            # whether that query interprets NULL as all values or as a literal.
+            if item.parameter not in resolved_params or resolved_params[item.parameter] is not None:
                 return False
             continue
         if item.parameter not in resolved_params:
@@ -90,12 +133,12 @@ def snapshot_covers_request(
 
 def validate_snapshot_parameter_ranges(
     *,
-    param_schema: dict[str, object],
+    filters: tuple[CompiledSnapshotFilter, ...],
     request_params: dict[str, object],
 ) -> None:
     """Reject an inclusive lower bound that is later than its upper bound."""
     bounds: dict[str, dict[str, Any]] = {}
-    for item in _compile_filters(param_schema):
+    for item in filters:
         if item.operator not in {"gte", "lte"}:
             continue
         value = request_params.get(item.parameter)
@@ -105,33 +148,40 @@ def validate_snapshot_parameter_ranges(
     for column, values in bounds.items():
         lower = values.get("gte")
         upper = values.get("lte")
-        if lower is not None and upper is not None and lower > upper:
-            raise ValueError(f"Snapshot filter lower bound exceeds upper bound for '{column}'.")
+        if lower is not None and upper is not None:
+            try:
+                reversed_range = lower > upper
+            except TypeError as exc:
+                raise ValueError(
+                    f"Snapshot filter bounds have incompatible types for '{column}'."
+                ) from exc
+            if reversed_range:
+                raise ValueError(f"Snapshot filter lower bound exceeds upper bound for '{column}'.")
 
 
 def unavailable_snapshot_filter_columns(
     *,
     rows: list[dict[str, object]],
-    param_schema: dict[str, object],
+    filters: tuple[CompiledSnapshotFilter, ...],
 ) -> list[str]:
     """Return configured output columns absent from a non-empty snapshot."""
     if not rows:
         return []
     available = {column for row in rows for column in row}
-    return sorted({item.column for item in _compile_filters(param_schema)} - available)
+    return sorted({item.column for item in filters} - available)
 
 
 def filter_snapshot_rows(
     *,
     rows: list[dict[str, object]],
-    param_schema: dict[str, object],
+    filters: tuple[CompiledSnapshotFilter, ...],
     request_params: dict[str, object],
 ) -> list[dict[str, object]]:
     """Apply explicitly configured, typed comparisons to cached rows."""
-    filters = _compile_filters(param_schema)
     filtered: list[dict[str, object]] = []
     for row in rows:
         matches = True
+        coerced_values: dict[tuple[str, str], Any] = {}
         for item in filters:
             requested = request_params.get(item.parameter)
             if requested is None:
@@ -140,7 +190,10 @@ def filter_snapshot_rows(
                 matches = False
                 break
             try:
-                row_value = item.coerce_value(row[item.column])
+                cache_key = (item.column, item.coercion_key)
+                if cache_key not in coerced_values:
+                    coerced_values[cache_key] = _coerce_cached_row_value(item, row[item.column])
+                row_value = coerced_values[cache_key]
             except ValidationError, ValueError, TypeError:
                 matches = False
                 break

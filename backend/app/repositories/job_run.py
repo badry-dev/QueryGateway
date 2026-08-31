@@ -32,6 +32,13 @@ class JobRunRepository(BaseCrudRepository[JobRun]):
         )
         return result.scalar_one_or_none()
 
+    async def get_by_ids(self, job_run_ids: Sequence[uuid.UUID]) -> Sequence[JobRun]:
+        """Return all job runs matching the supplied IDs in one query."""
+        if not job_run_ids:
+            return []
+        result = await self._db.execute(select(JobRun).where(JobRun.id.in_(job_run_ids)))
+        return result.scalars().all()
+
     async def get_all(
         self,
         *,

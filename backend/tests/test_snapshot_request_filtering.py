@@ -1,16 +1,19 @@
 """Public snapshot endpoints enforce and apply declared request parameters."""
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from app.models.endpoint import ApiEndpoint, DataStrategy
 from app.models.job_run import JobRun, JobRunStatus
 from app.models.snapshot import Snapshot
+from app.repositories.job_run import JobRunRepository
 from app.schemas.endpoint import EndpointCreate, ParamDescriptor
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog.testing import capture_logs
 
 
 def test_snapshot_filter_contract_is_preserved_in_parameter_schema() -> None:
@@ -65,6 +68,37 @@ def test_null_means_all_is_rejected_for_required_parameter() -> None:
                 "operator": "eq",
                 "null_means_all": True,
             },
+        )
+
+
+def test_snapshot_range_mappings_require_matching_parameter_types() -> None:
+    with pytest.raises(ValueError, match="same declared parameter type"):
+        EndpointCreate(
+            name="mixed-range-types",
+            path="mixed-range-types",
+            connection_id=uuid.uuid4(),
+            sql_text=(
+                "SELECT * FROM orders "
+                "WHERE business_date >= :start_date AND business_date <= :end_date"
+            ),
+            param_schema={
+                "start_date": {
+                    "type": "integer",
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "gte",
+                    },
+                },
+                "end_date": {
+                    "type": "string",
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "lte",
+                    },
+                },
+            },
+            allow_unauthenticated=True,
+            data_strategy="snapshot",
         )
 
 
@@ -192,6 +226,40 @@ async def test_snapshot_filters_dates_and_store_as_data_parameters(
 
 
 @pytest.mark.integration
+async def test_snapshot_filters_oracle_datetime_strings_as_dates(
+    async_client: object,
+    db_session: AsyncSession,
+) -> None:
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    path = await _seed_snapshot_endpoint(client, db_session)
+    endpoint = (
+        await db_session.execute(select(ApiEndpoint).where(ApiEndpoint.path == path))
+    ).scalar_one()
+    snapshot = (
+        await db_session.execute(select(Snapshot).where(Snapshot.endpoint_id == endpoint.id))
+    ).scalar_one()
+    snapshot.data = [
+        {"business_date": "2026-08-10 00:00:00", "store_id": 1, "amount": 10},
+        {"business_date": "2026-08-20 17:45:00", "store_id": 2, "amount": 20},
+    ]
+    await db_session.flush()
+
+    response = await client.get(
+        f"/api/v1/data/{path}",
+        params={
+            "start_date": "2026-08-15",
+            "end_date": "2026-08-25",
+            "store_id": "2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == [
+        {"business_date": "2026-08-20 17:45:00", "store_id": 2, "amount": 20}
+    ]
+
+
+@pytest.mark.integration
 async def test_snapshot_rejects_request_outside_retained_coverage(
     async_client: object,
     db_session: AsyncSession,
@@ -223,6 +291,34 @@ async def test_snapshot_rejects_reversed_parameter_range(
 
     assert response.status_code == 422
     assert response.json()["code"] == "invalid_parameter_range"
+
+
+@pytest.mark.integration
+async def test_snapshot_rejection_log_contains_required_request_context(
+    async_client: object,
+    db_session: AsyncSession,
+) -> None:
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    path = await _seed_snapshot_endpoint(client, db_session)
+
+    with capture_logs() as logs:
+        response = await client.get(
+            f"/api/v1/data/{path}",
+            params={"start_date": "2026-08-25", "end_date": "2026-08-15"},
+            headers={"X-Request-ID": "snapshot-review-log"},
+        )
+
+    assert response.status_code == 422
+    rejection = next(
+        entry for entry in logs if entry.get("event") == "invalid_snapshot_parameter_range"
+    )
+    assert rejection["request_id"] == "snapshot-review-log"
+    assert rejection["endpoint"] == path
+    assert rejection["status"] == 422
+    assert rejection["method"] == "GET"
+    assert rejection["user"]
+    assert "client_ip" in rejection
+    assert rejection["duration_ms"] >= 0
 
 
 @pytest.mark.integration
@@ -298,6 +394,36 @@ async def test_snapshot_selects_newest_retained_snapshot_that_covers_request(
 
 
 @pytest.mark.integration
+async def test_snapshot_candidate_job_runs_are_loaded_in_one_batch(
+    async_client: object,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    path = await _seed_snapshot_endpoint(client, db_session)
+    original_get_by_ids = JobRunRepository.get_by_ids
+    batch_call_count = 0
+
+    async def tracked_get_by_ids(
+        repository: JobRunRepository,
+        job_run_ids: Sequence[uuid.UUID],
+    ) -> Sequence[JobRun]:
+        nonlocal batch_call_count
+        batch_call_count += 1
+        return await original_get_by_ids(repository, job_run_ids)
+
+    monkeypatch.setattr(JobRunRepository, "get_by_ids", tracked_get_by_ids)
+
+    response = await client.get(
+        f"/api/v1/data/{path}",
+        params={"start_date": "2026-08-20", "end_date": "2026-08-20"},
+    )
+
+    assert response.status_code == 200
+    assert batch_call_count == 1
+
+
+@pytest.mark.integration
 async def test_omitted_all_value_filter_skips_fixed_value_snapshot(
     async_client: object,
     db_session: AsyncSession,
@@ -307,6 +433,60 @@ async def test_omitted_all_value_filter_skips_fixed_value_snapshot(
     endpoint = (
         await db_session.execute(select(ApiEndpoint).where(ApiEndpoint.path == path))
     ).scalar_one()
+
+    fixed_store_run = JobRun(
+        endpoint_id=endpoint.id,
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+        status=JobRunStatus.success,
+        row_count=1,
+        resolved_params_json={
+            "start_date": "2026-08-01",
+            "end_date": "2026-08-31",
+            "store_id": 1,
+        },
+        trigger_source="schedule",
+    )
+    db_session.add(fixed_store_run)
+    await db_session.flush()
+    db_session.add(
+        Snapshot(
+            endpoint_id=endpoint.id,
+            job_run_id=fixed_store_run.id,
+            data=[{"business_date": "2026-08-20", "store_id": 1, "amount": 99}],
+            row_count=1,
+            created_at=datetime.now(UTC) + timedelta(minutes=1),
+        )
+    )
+    await db_session.flush()
+
+    response = await client.get(
+        f"/api/v1/data/{path}",
+        params={"start_date": "2026-08-20", "end_date": "2026-08-20"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"] == [{"business_date": "2026-08-20", "store_id": 2, "amount": 20}]
+
+
+@pytest.mark.integration
+async def test_omitted_optional_filter_requires_a_null_resolved_snapshot(
+    async_client: object,
+    db_session: AsyncSession,
+) -> None:
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    path = await _seed_snapshot_endpoint(client, db_session)
+    endpoint = (
+        await db_session.execute(select(ApiEndpoint).where(ApiEndpoint.path == path))
+    ).scalar_one()
+    store_descriptor = dict(endpoint.param_schema_json["store_id"])
+    store_mapping = dict(store_descriptor["snapshot_filter"])
+    store_mapping["null_means_all"] = False
+    store_descriptor["snapshot_filter"] = store_mapping
+    endpoint.param_schema_json = {
+        **endpoint.param_schema_json,
+        "store_id": store_descriptor,
+    }
 
     fixed_store_run = JobRun(
         endpoint_id=endpoint.id,

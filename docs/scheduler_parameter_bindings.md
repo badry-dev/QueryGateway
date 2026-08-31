@@ -99,11 +99,12 @@ Example endpoint parameter schema:
 }
 ```
 
-`null_means_all` is valid only for `eq`. It means a schedule run whose resolved value is SQL `NULL` covers every requested value for that parameter. When that optional request parameter is omitted, a fixed-value snapshot is treated as only a subset and the selector continues to an all-value snapshot. This flag does not make a required HTTP parameter optional. A parameter such as `store_id` is an ordinary row filter here; it is not tenant authorization. Authentication and authorization remain the responsibility of the endpoint's configured auth method.
+`null_means_all` is valid only for `eq`. It means a schedule run whose resolved value is SQL `NULL` covers every requested value for that parameter. Whenever an optional request parameter is omitted, the selector requires a retained run where that parameter also resolved to SQL `NULL`; a fixed-value snapshot is only a subset and cannot satisfy the request. Without `null_means_all`, that NULL-resolved snapshot represents the query's exact NULL semantics rather than all possible values. This flag does not make a required HTTP parameter optional. A parameter such as `store_id` is an ordinary row filter here; it is not tenant authorization. Authentication and authorization remain the responsibility of the endpoint's configured auth method.
 
 The data plane checks retained snapshots newest first and selects the newest snapshot whose persisted job-run parameters cover the request. Behavior is explicit:
 
 - Missing or invalid required parameters return HTTP 422.
+- Lower and upper mappings for the same cached column must declare the same parameter type.
 - A lower bound greater than its upper bound returns HTTP 422 with `code=invalid_parameter_range`.
 - A valid request outside all retained coverage returns HTTP 422 with `code=snapshot_out_of_coverage`.
 - A request inside coverage with no matching business rows returns HTTP 200 with `data: []`.

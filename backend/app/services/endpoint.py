@@ -216,7 +216,6 @@ class EndpointService:
             changes.pop("column_map", None)
 
         effective_strategy = payload.data_strategy or obj.data_strategy
-        require_snapshot_filter_mappings(effective_strategy, effective_param_schema)
 
         if self._schedule_repo is not None:
             schedule = await self._schedule_repo.get_by_endpoint_id(endpoint_id)
@@ -242,6 +241,8 @@ class EndpointService:
                     scheduled_for=datetime.now(UTC),
                     window=schedule.window_config_json,
                 )
+
+        require_snapshot_filter_mappings(effective_strategy, effective_param_schema)
 
         obj = await self._repo.update(obj, changes)
 
