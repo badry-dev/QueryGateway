@@ -16,11 +16,17 @@
 - SQL bind parameter validation and rejection of unsafe SQL composition.
 - Dynamic route resolution under `/api/v1/data/*`.
 - Scheduler job creation/execution logging and snapshot cache behavior.
+- Required-parameter enforcement for both live and snapshot requests, including supported date
+  formats and optional SQL `NULL` behavior.
+- Schedule binding completeness, logical-date/window resolution, retained-snapshot coverage,
+  reversed ranges, mapped-column failures, and typed cached-row filtering.
 - Alembic migration upgrade/downgrade sanity.
 
 ## Frontend Test Focus
 - Wizard step transitions and validation.
 - SQL editor integration behavior and parameter UX.
+- Separation of preview samples, endpoint defaults, schedule bindings, and snapshot filter
+  mappings in endpoint create/edit flows.
 - Connection/auth/schedule/settings form validation.
 - Error rendering for API failures.
 

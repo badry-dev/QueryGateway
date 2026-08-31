@@ -1,6 +1,10 @@
 # QueryGateway Implementation Plan
 
-QueryGateway will be delivered as a self-hosted platform that lets teams expose Oracle query results as secure REST endpoints through a guided wizard, while preserving security-by-default, reproducible infrastructure, and operational reliability from day one. This plan translates the approved architecture and recommendations into phased, testable implementation work using Python 3.12+, FastAPI, PostgreSQL, SQLAlchemy 2.0 + Alembic, APScheduler 3.x, Pydantic Settings, API versioning, Vite + React SPA, shadcn/ui + Tailwind, and Dockerized CI/CD.
+QueryGateway is delivered as a self-hosted platform that lets teams expose Oracle query results as
+secure REST endpoints through a guided wizard while preserving security-by-default, reproducible
+infrastructure, and operational reliability. The implemented baseline uses Python 3.14+, FastAPI,
+PostgreSQL, SQLAlchemy 2.0 + Alembic, APScheduler 3.x, Pydantic Settings, API versioning, a Vite +
+React SPA, shadcn/ui + Tailwind, and Dockerized CI/CD.
 
 ## Scope and Non-Goals
 
@@ -47,7 +51,8 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
 - FastAPI service responsibilities:
   - Validate auth for every data endpoint request.
   - Resolve endpoint metadata and selected freshness strategy.
-  - Execute parameterized SQL against Oracle (live mode) or return latest snapshot (scheduled mode).
+  - Execute parameterized SQL against Oracle (live mode) or select a covering retained snapshot
+    and apply typed cached-row filters (snapshot mode).
   - Manage scheduler jobs and persist execution telemetry.
 
 ### Versioning and Deprecation Rules
@@ -74,7 +79,7 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
 - Shared coding standards and contribution conventions.
 
 ### Key Implementation Tasks
-- Initialize backend Python project for 3.12+ with dependency management and lint/test/type scripts.
+- Initialize backend Python project for 3.14+ with dependency management and lint/test/type scripts.
 - Initialize frontend Vite + React + TypeScript with Tailwind, shadcn/ui base setup, eslint/prettier, and vitest (or Jest).
 - Add root-level tooling docs and Makefile/task runner commands for consistent local workflows.
 - Create `docker-compose.yml` with `api`, `web`, `db` and optional `oracle` profile.
@@ -212,7 +217,7 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
 
 ### Deliverables
 - Multi-step wizard UI and backend orchestration APIs.
-- Rich SQL editor integration (Monaco via `@monaco-editor/react` or CodeMirror 6 via `@uiw/react-codemirror`).
+- Rich SQL editor integration with CodeMirror 6 via `@uiw/react-codemirror`.
 - SQL preview engine with bind parameter extraction/validation rules.
 - Endpoint registration pipeline and dynamic data router.
 
@@ -223,6 +228,9 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
   - Only named bind variables (e.g., `:param_name`).
   - Reject string-concatenated SQL interpolation patterns.
   - Validate input types/coercion using explicit schemas.
+  - Treat preview samples as temporary values, never persisted defaults.
+  - Enforce required descriptors for both live and snapshot requests regardless of defaults.
+  - Keep optional live defaults independent from schedule-owned SQL bindings.
 - Build preview execution endpoint to return sample JSON and inferred schema.
 - Implement result mapping layer (rename/select columns and output shaping).
 - Build endpoint definition step (path, GET method for MVP, auth method, data strategy).
@@ -247,10 +255,12 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
 ## Phase 5: Module 4 - Scheduling + Snapshot Cache End-to-End
 
 ### Goals
-- Enable scheduled data refresh with persistent jobs and cached response serving.
+- Enable scheduled data refresh with persisted definitions, restart restoration, and filtered
+  cached response serving.
 
 ### Deliverables
-- APScheduler 3.x integration with PostgreSQL-backed job store.
+- APScheduler 3.x integration with an in-memory job store whose active schedule definitions are
+  persisted in PostgreSQL and restored on API startup.
 - Schedule CRUD and control actions (run now, pause/resume, enable/disable).
 - Snapshot cache storage in PostgreSQL JSONB.
 - Job execution logging dashboard and APIs.
@@ -260,14 +270,18 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
 - Model schedules, job state, run history, and snapshot payload metadata.
 - Implement admin APIs under `/api/v1/admin/schedules/*` and `/api/v1/admin/jobs/*`.
 - Create execution worker logic for scheduled query runs and cache replacement strategy.
+- Require schedule-owned parameter bindings, timezone-aware logical dates, and declarative
+  calendar windows; persist resolved values for audit and coverage selection.
 - Add staleness tracking and fallback handling when latest snapshot fails.
-- Wire data endpoints in snapshot mode to read from cache with freshness metadata.
+- Wire data endpoints in snapshot mode to require cached-column mappings, select the newest
+  retained run that covers the request, and apply typed equality/range filters.
 - Build frontend schedule management UI and execution log views.
 
 ### Acceptance Criteria
-- Scheduled jobs persist across process restarts.
+- Active scheduled jobs are restored exactly once after a single API process restarts.
 - Manual run and pause/resume actions work reliably from UI and API.
-- Snapshot-mode endpoints return cached JSON and expose last-refresh timestamps.
+- Snapshot-mode endpoints enforce required request parameters, reject requests outside retained
+  coverage, return only filtered cached rows, and expose last-refresh metadata.
 - Job logs capture start time, duration, row count, status, and error details.
 
 ### Dependencies
@@ -359,7 +373,7 @@ QueryGateway will be delivered as a self-hosted platform that lets teams expose 
 
 GitHub Actions workflows will run on pull requests and protected branches with separate jobs:
 - Backend job
-  - Setup Python 3.12+
+  - Setup Python 3.14+
   - Install backend dependencies
   - Run `ruff`, `mypy`, `pytest`
 - Frontend job

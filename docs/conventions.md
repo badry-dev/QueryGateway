@@ -35,6 +35,8 @@
 - Never edit an already-applied migration file; add a new revision.
 - Verify rollback: `alembic downgrade -1` must succeed in CI.
 - Migration files must be committed alongside the model change.
+- JSON contract extensions inside existing JSONB columns do not require a relational migration;
+  document and test the API compatibility impact instead.
 
 ## Security Constraints
 
@@ -45,6 +47,21 @@
 - Issue and verify JWTs with `PyJWT` only; always include `exp` and `iat` claims.
 - Never store secrets in code, fixtures, tests, or docs. Use environment variables.
 - Never return plaintext credentials or token bodies in API responses or logs.
+
+## Parameter Contract
+
+- Keep SQL preview samples, optional live-request defaults, schedule-owned bindings, and snapshot
+  request filters as separate concepts.
+- Required descriptors remain required for live and snapshot HTTP requests even if they contain a
+  default.
+- Schedules must bind every endpoint SQL parameter explicitly and must never read endpoint
+  defaults during execution.
+- Parameterized snapshot endpoints must map every request parameter to a final cached output
+  column with `eq`, `gte`, or `lte`, prove retained-snapshot coverage, and filter cached rows.
+- Snapshot filter mappings are row selection only; authorization belongs to the endpoint auth
+  method.
+- The canonical behavior and error codes live in
+  [Endpoint, scheduler, and snapshot parameter contracts](scheduler_parameter_bindings.md).
 
 ## Logging Standards
 

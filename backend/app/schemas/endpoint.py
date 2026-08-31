@@ -1,7 +1,7 @@
 """Pydantic schemas for API endpoint management (Phase 4).
 
 Public contract rules:
-- ``sql_text`` must use named bind parameters (``:`param_name``).
+- ``sql_text`` must use named bind parameters (``:param_name``).
 - ``path`` must be a valid URL segment (no leading slash, no whitespace).
 - ``param_schema_json`` maps parameter names to type/required/default descriptors.
 - ``column_map_json`` maps source column names to output names (optional).

@@ -13,8 +13,9 @@ from app.models.base import Base, UUIDPrimaryKeyMixin
 class Snapshot(UUIDPrimaryKeyMixin, Base):
     """Immutable cache of a single scheduler query execution result.
 
-    snapshot-strategy endpoints read from the latest Snapshot for their
-    endpoint_id, falling back to the previous one on job failure.
+    Parameterized snapshot endpoints select the newest retained snapshot whose
+    associated job-run inputs cover the request, then apply typed row filters.
+    Unparameterized endpoints use the newest retained snapshot.
     """
 
     __tablename__ = "snapshots"

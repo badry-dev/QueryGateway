@@ -1,8 +1,8 @@
 # Docker Instructions
 
 ## Do
-- Keep Docker assets in `docker/` and `docker-compose.yml`.
-- Ensure compose supports `api`, `web`, `db` services.
+- Keep Docker assets in `docker/`, `docker-compose.yml`, and `compose.production.yml`.
+- Ensure compose supports `db`, one-shot `migrate`, `api`, and `web` services.
 - Keep optional local Oracle service/profile isolated and documented.
 - Use deterministic base image tags.
 - Ensure backend and frontend images build in CI.
@@ -21,8 +21,10 @@
 - `docker compose logs --tail=200 db`
 
 ## Runtime Expectations
-- Backend starts only after DB readiness.
-- Migrations are documented and run deterministically.
+- The `migrate` service starts after DB readiness and must complete successfully before the API
+  starts.
+- Migrations are applied deterministically with `alembic upgrade head`; do not add an independent
+  API-startup migration path that can race the Compose service.
 - Config comes from environment variables compatible with Pydantic Settings.
 
 ## Stop Conditions

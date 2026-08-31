@@ -11,11 +11,19 @@
 - Emit structlog events with required fields.
 - Validate SQL bind parameters via typed schemas before execution.
 - Use SQLAlchemy `text()` and binds for user SQL.
+- Enforce required HTTP parameters with `build_param_model(..., enforce_required=True)` for both
+  live and snapshot data paths.
+- Resolve scheduled SQL binds only from schedule-owned declarative bindings.
+- Require complete snapshot filter mappings, prove retained-run coverage, and filter cached rows
+  with the declared typed `eq`/`gte`/`lte` operators.
 
 ## Do Not
 - Do not add unversioned API routes.
 - Do not use `python-jose` or `passlib`.
 - Do not interpolate SQL strings with user input.
+- Do not treat quoted `':param'` text as a bind placeholder.
+- Do not reuse endpoint defaults as implicit schedule inputs or serve an unfiltered parameterized
+  snapshot.
 - Do not edit old migration revisions after merge.
 - Do not return secrets in API responses or logs.
 
@@ -36,6 +44,8 @@
 - `endpoint`
 - `status`
 - `duration_ms`
+- `method`
+- `client_ip`
 - `event`
 
 ## Stop Conditions

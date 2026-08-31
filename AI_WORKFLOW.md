@@ -18,6 +18,9 @@
 4. If API changes: preserve `/api/v1/*` compatibility or add version bump.
 5. After editing: run lint/tests/build for touched areas.
 6. Update docs/changelog notes when behavior or contract changes.
+7. For parameter behavior, keep preview samples, endpoint request defaults, schedule bindings,
+   and snapshot request filters separate; verify the canonical contract in
+   `docs/scheduler_parameter_bindings.md`.
 
 ## Verification Checklist
 - Backend checks pass: `ruff`, `mypy`, `pytest`.
@@ -26,6 +29,8 @@
 - Migrations included for DB changes.
 - No secrets in code, logs, tests, or docs.
 - No breaking API change without explicit versioning plan.
+- Required live/snapshot parameters remain enforced and parameterized snapshots cannot fall back
+  to unfiltered cached data.
 
 ## PR Checklist
 - Scope is clear and minimal.

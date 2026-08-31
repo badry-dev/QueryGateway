@@ -1,6 +1,6 @@
 # QueryGateway
 
-> A self-hosted platform that turns Oracle SQL queries into secure, versioned REST API endpoints — no application code required. Author a parameterized query in a guided wizard, attach authentication, choose a data-freshness strategy, and publish a live endpoint that other systems can consume.
+> A self-hosted platform that turns Oracle SQL queries into secure, versioned REST API endpoints — no application code required. Author a parameterized query in a guided wizard, attach authentication, choose a data-freshness strategy, and publish a live or snapshot-backed endpoint that other systems can consume.
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE.txt)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/)
@@ -61,7 +61,7 @@ Define connection ─▶ Author SQL (with :bind params) ─▶ Attach auth ─�
 ```
 
 1. **Connect** to your Oracle database with securely stored, encrypted credentials.
-2. **Author** a `SELECT` query using named bind parameters (`:param_name`) in a rich SQL editor. The wizard detects parameters as you type, requests temporary sample values before previewing, and supports optional endpoint defaults for live requests. Required parameters remain mandatory for both live and snapshot endpoints; callers can supply dates as either `YYYY-MM-DD` or `DD-MM-YYYY`.
+2. **Author** a `SELECT` query using unquoted named bind parameters (`:param_name`) in a rich SQL editor. The wizard detects parameters as you type and requests temporary sample values before previewing; preview samples are never persisted. Optional live-request parameters can have typed defaults, explicit SQL `NULL`, or `today`/`yesterday` date defaults. Required parameters remain mandatory for both live and snapshot requests even when a default exists, and dates accept `YYYY-MM-DD` or `DD-MM-YYYY`.
 3. **Secure** the endpoint by attaching a Bearer token, Basic Auth, or API key policy.
 4. **Choose** a data strategy: serve results **live** on each request, or from a **scheduled snapshot** cache. Snapshot endpoints explicitly map each request parameter to a cached output column and comparison. Schedules independently own the SQL values that define cache coverage: bind a fixed value, explicit SQL `NULL`, logical run date, relative date, or a reusable calendar window, then preview the next three resolved runs before creating the schedule.
 5. **Publish** a versioned endpoint under `/api/v1/data/*` that resolves dynamically — no service restart needed.
@@ -73,9 +73,9 @@ QueryGateway is organized into five admin modules, all driven from the React adm
 | Module | What it does |
 |--------|--------------|
 | **Connections** | Create, edit, test, and delete Oracle database connections. Credentials are encrypted at rest; pool sizing and timeouts are configurable. Uses `python-oracledb`; thin mode needs no native client, while the backend Docker image includes Oracle Instant Client 19.32 for thick mode. |
-| **API Creation Wizard** | A multi-step wizard that turns a parameterized SQL query into a deployable GET endpoint: pick a connection, author SQL with a rich editor, supply preview-only sample values for detected bind parameters, configure fixed values, explicit SQL `NULL` values for optional binds, or dynamic date defaults, preview sample rows and inferred schema, map/rename output columns, attach an auth method, and select a data strategy. |
+| **API Creation Wizard** | A multi-step wizard that turns a parameterized SQL query into a deployable GET endpoint: pick a connection, author SQL with a rich editor, supply preview-only sample values, configure optional live-request defaults, preview rows and inferred schema, map/rename output columns, attach an auth method, select a data strategy, and map every snapshot request parameter to a cached output column and comparison. |
 | **Authentication** | Manage per-endpoint auth methods — Bearer token (JWT), Basic Auth, and API key. Tokens are issued/verified with `PyJWT`; credentials are hashed with `bcrypt`. Every `/api/v1/data/*` request is authenticated; endpoints without a dedicated method require the platform admin Bearer token. |
-| **Scheduling & Snapshots** | Schedule query refreshes with friendly hourly, daily, weekly, or monthly calendar controls, an advanced custom-cron option, or a fixed interval. Each schedule has an IANA timezone and explicit per-parameter sources: fixed value, SQL `NULL`, logical run date, relative date, or inclusive calendar-window boundaries such as previous day, last N complete days, week/month to date, previous week, and previous month. Public requests select the newest retained snapshot that covers their typed parameter values, then apply explicit equality or inclusive range filters to cached rows. Preview the next three resolved runs, run now, pause/resume, and inspect persisted logical-date, window, and resolved-bind audit context. Results are cached as PostgreSQL JSONB snapshots. Active APScheduler jobs are restored on API startup; deletion preserves job-run history. |
+| **Scheduling & Snapshots** | Schedule query refreshes with friendly hourly, daily, weekly, or monthly calendar controls, an advanced custom-cron option, or a fixed interval. Each schedule has an IANA timezone and explicit per-parameter sources: fixed value, SQL `NULL`, logical run date, relative date, or inclusive calendar-window boundaries such as previous day, last N complete days, week/month to date, previous week, and previous month. Authenticated requests select the newest retained snapshot that covers their typed parameter values, then apply explicit equality or inclusive range filters to cached rows. Preview the next three resolved runs, run now, pause/resume, and inspect persisted logical-date, window, and resolved-bind audit context. Results are cached as PostgreSQL JSONB snapshots. Active APScheduler jobs are restored on API startup; deletion preserves job-run history. |
 | **Settings & Health** | Configure runtime settings (base URL/port, logging level, query timeouts, CORS/rate-limit inputs) and view a health dashboard covering API, PostgreSQL, Oracle connectivity, scheduler status, and recent job outcomes. |
 
 ### Security by Default
@@ -83,7 +83,7 @@ QueryGateway is organized into five admin modules, all driven from the React adm
 - **SQL injection resistant** — user-defined SQL runs only through SQLAlchemy `text()` with named bind parameters. Request values are never concatenated into SQL strings, and bind values are validated through typed schemas before execution.
 - **Encrypted credentials** — Oracle connection secrets are encrypted at rest using an environment-provided key.
 - **Mandatory data authentication** — attach a Bearer token, Basic Auth, or API key policy to an endpoint. If no dedicated method is attached, the endpoint requires the platform admin Bearer token; anonymous data access is never allowed.
-- **Structured, redacted logging** — `structlog` emits JSON logs with correlation fields (`request_id`, `user`, `endpoint`, `status`, `duration_ms`); credentials and tokens are redacted before emission.
+- **Structured, redacted logging** — `structlog` emits JSON logs with correlation fields (`request_id`, `user`, `endpoint`, `status`, `duration_ms`, `method`, `client_ip`, `event`); credentials and tokens are redacted before emission.
 
 ### Two API Surfaces
 
@@ -248,7 +248,7 @@ QueryGateway currently ships the five core admin modules (Connections, API Creat
 - **Advanced access control** — finer-grained RBAC beyond the baseline admin role.
 - **GraphQL** — an alternative query surface alongside REST.
 
-These are not commitments or a release schedule — they're open directions. If one interests you, open an issue to discuss before starting work. See [`project_plan.md`](project_plan.md) for the full scope and non-goals.
+These are not commitments or a release schedule — they're open directions. If one interests you, open an issue to discuss before starting work. See the [implementation plan](docs/project_plan.md) for the full scope and non-goals.
 
 ## Contributing & Community
 
@@ -262,7 +262,8 @@ Contributions are welcome — whether that's code, docs, bug reports, or ideas.
 ## Documentation
 
 - [Architecture](docs/architecture.md) — system components, design decisions, directory layout
-- [Implementation Plan](project_plan.md) — modules, scope, and phased delivery
+- [Endpoint, scheduler, and snapshot parameter contracts](docs/scheduler_parameter_bindings.md) — request defaults, schedule bindings, coverage, filtering, and error semantics
+- [Implementation Plan](docs/project_plan.md) — modules, scope, and phased delivery
 - [Deployment](docs/deployment.md) — self-hosted setup and secret generation
 - [Operations](docs/operations.md) — backup/restore, monitoring, troubleshooting
 - [Security Checklist](docs/security_checklist.md) — security validation controls

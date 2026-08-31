@@ -1,5 +1,7 @@
 # Implementation Progress
 
+**Last updated:** 2026-08-31
+
 ## Phase 0: Repository Scaffolding, CI/CD, Docker, Conventions — COMPLETE
 
 **Completed:** 2026-03-04
@@ -253,10 +255,13 @@ Deliver the core wizard that converts parameterized SQL into deployable versione
 
 ## Phase 5: Module 4 - Scheduling + Snapshot Cache End-to-End — COMPLETE
 
-**Completed:** 2026-03-06
+**Initial completion:** 2026-03-06
+
+**Scheduler/parameter hardening updated:** 2026-08-31
 
 ### Goals
-Enable scheduled data refresh with persistent jobs and cached response serving.
+Enable scheduled data refresh with persisted definitions, restart restoration, and filtered cached
+response serving.
 
 ### Delivered
 
@@ -270,7 +275,8 @@ Enable scheduled data refresh with persistent jobs and cached response serving.
 | `backend/app/services/scheduler.py` | APScheduler 3.x AsyncIOScheduler integration: lifecycle (start/stop), job execution (Oracle query + snapshot persistence), job management (add/remove/pause/resume) |
 | `backend/app/services/schedule.py` | Business logic: CRUD, one-schedule-per-endpoint uniqueness, run-now, pause/resume, job run queries, snapshot queries |
 | `backend/app/routers/schedules.py` | REST CRUD + `/run` + `/pause` + `/resume` + job runs + snapshots under `/api/v1/admin/schedules/*` |
-| `backend/app/routers/data.py` | **Updated**: Snapshot mode serving — snapshot-strategy endpoints return cached JSONB with freshness metadata |
+| `backend/app/services/data.py` | Snapshot orchestration: required-parameter validation, retained-run coverage selection, typed cached-row filtering, and stable error responses |
+| `backend/app/services/snapshot_filtering.py` | Compiled `eq`/`gte`/`lte` filters, coverage checks, range validation, cached date normalization, and row filtering |
 | `backend/app/main.py` | **Updated**: APScheduler lifecycle (start on startup, stop on shutdown), schedule router registration |
 | `backend/tests/test_schedules.py` | Schema validation unit tests + API integration tests |
 
@@ -293,21 +299,37 @@ Enable scheduled data refresh with persistent jobs and cached response serving.
 #### Scheduling Features
 - APScheduler 3.x with AsyncIOScheduler integration
 - Cron (5-field) and interval (seconds) schedule types
+- Friendly hourly/daily/weekly/monthly cron controls plus advanced custom cron
+- IANA timezone, logical run date, and inclusive reusable calendar windows
+- Explicit schedule-owned sources for every SQL bind: literal, SQL `NULL`, run date, relative
+  date, window start, or window end
+- Preview of upcoming nominal runs, logical dates, windows, and resolved typed parameters
 - Job coalescing (max 1 instance per job, 60s misfire grace time)
-- Scheduler lifecycle tied to FastAPI startup/shutdown
+- Scheduler lifecycle tied to FastAPI startup/shutdown; active database definitions are restored on
+  startup in the documented single-process topology
 - One schedule per endpoint uniqueness constraint
 
 #### Snapshot Cache Features
 - JSONB snapshot storage in PostgreSQL
 - Automatic snapshot retention (keeps latest 5 per endpoint)
-- Snapshot-mode data endpoints serve cached results with `snapshot_created_at` metadata
+- Parameterized snapshot endpoints require a final cached-column mapping and allowlisted operator
+  for every request parameter
+- Data requests enforce required parameters, choose the newest retained snapshot whose job-run
+  inputs cover the complete request, and return only typed filtered rows
+- Covered requests with no matching rows return `data: []`; invalid ranges or requests outside
+  retained coverage return HTTP 422
+- Snapshot responses include filtered `row_count`, original `snapshot_row_count`, and
+  `snapshot_created_at` metadata
 - Fallback: 503 if no snapshot available yet
 - Column mapping applied during job execution
 
 #### Job Execution
-- Immutable job run audit records (started_at, finished_at, status, row_count, error_detail)
+- Immutable job run audit records including scheduled/logical time, window boundaries, resolved
+  parameters, trigger source, binding hash, row count, status, and error detail
 - Status tracking: running → success/failed/timeout
-- Default parameter values used for scheduled queries
+- Schedule-owned bindings are resolved for scheduled queries; endpoint request defaults are never
+  read by the scheduler
+- `(schedule_id, scheduled_for)` uniqueness prevents duplicate logical runs
 - Structured logging with job_id, run_id, row_count, duration_ms, success fields
 
 #### Frontend
@@ -317,11 +339,13 @@ Enable scheduled data refresh with persistent jobs and cached response serving.
 | `frontend/src/lib/api.ts` | Axios-based `schedulesApi` client (CRUD + run/pause/resume + jobs + snapshots) |
 | `frontend/src/lib/queryClient.ts` | Schedule query key factories |
 | `frontend/src/pages/SchedulesPage.tsx` | List table + create/delete dialogs + run now/pause/resume controls + job runs viewer |
+| `frontend/src/components/schedules/ScheduleParameterBindings.tsx` | Schedule-local binding sources, calendar window controls, and resolved-run preview |
+| `frontend/src/components/endpoints/SnapshotFilterMappings.tsx` | Required create/edit mappings from request parameters to cached output columns |
 | `frontend/src/pages/DashboardPage.tsx` | Updated with schedules count card (4-column grid) |
 | `frontend/src/components/Layout.tsx` | Updated with Schedules nav item, version bumped to v0.5.0 |
 | `frontend/src/App.tsx` | Updated with /schedules route |
 
-#### Checks
+#### Phase completion checks (2026-03-06)
 - `ruff check .` — clean
 - `mypy .` — clean (58 files, 0 errors)
 - `pytest -k "not integration"` — 69 passed
@@ -368,7 +392,7 @@ Provide centralized operational controls and health visibility.
 |-----|------|---------|-----------------|
 | `log_level` | enum (DEBUG/INFO/WARNING/ERROR) | INFO | Yes |
 | `query_timeout_seconds` | integer (1-300) | 30 | No |
-| `cors_origins` | string (comma-separated) | * | Yes |
+| `cors_origins` | string (comma-separated) | `http://localhost:5173` | Yes (wildcard rejected) |
 | `snapshot_retention_count` | integer (1-100) | 5 | No |
 | `max_job_concurrency` | integer (1-20) | 3 | Yes |
 

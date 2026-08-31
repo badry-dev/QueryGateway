@@ -381,6 +381,16 @@ For a controlled preflight migration before starting the API, run:
 docker compose -f docker-compose.yml -f compose.production.yml up --build --force-recreate migrate
 ```
 
+After the API starts, verify the container reports the current Alembic head:
+
+```bash
+docker compose -f docker-compose.yml -f compose.production.yml exec -T api alembic current
+```
+
+Schedule-owned bindings and logical-run audit fields require the migration that introduced them;
+snapshot filter mappings themselves live in the existing endpoint JSON and do not add a relational
+migration.
+
 ### 7. Start Application
 
 ```bash
@@ -438,7 +448,11 @@ Before go-live:
 - Attach authentication to the endpoint.
 - Call one `/api/v1/data/*` route with valid credentials.
 - Confirm unauthenticated calls fail for protected data routes.
-- Confirm scheduler health if scheduled snapshots are used.
+- Confirm required parameters return HTTP 422 when omitted from both live and snapshot routes.
+- If scheduled snapshots are used, preview the schedule's resolved bindings, run it once, and
+  confirm an in-coverage request returns only filtered rows while an out-of-coverage request returns
+  `code=snapshot_out_of_coverage`.
+- Confirm scheduler health and verify active jobs return after an API-container restart.
 
 ## Startup After Windows Reboot
 

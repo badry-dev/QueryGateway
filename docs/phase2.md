@@ -4,6 +4,22 @@
 
 Extend QueryGateway from Oracle-only to a multi-database platform. Users will be able to register connections to different database engines, test them, and expose SQL queries as REST endpoints — exactly as today, but engine-agnostic.
 
+## Current compatibility baseline
+
+Any future database adapter must preserve the current v1 parameter behavior:
+
+- unquoted named binds, typed validation, and required-parameter enforcement for live and snapshot
+  requests;
+- separation of temporary preview samples, optional live defaults, and schedule-owned bindings;
+- timezone-aware logical schedule dates and declarative date windows; and
+- complete snapshot mappings, persisted-run coverage checks, and typed cached-row filtering before
+  data is returned.
+
+The canonical behavior is documented in
+[Endpoint, scheduler, and snapshot parameter contracts](scheduler_parameter_bindings.md). Engine
+adapters may translate bind syntax internally only after validation; they must not introduce raw
+string interpolation or weaken the public `/api/v1` contract.
+
 ---
 
 ## Proposed Database Types

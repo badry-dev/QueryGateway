@@ -16,7 +16,7 @@
 
 ```sh
 git clone <repo-url>
-cd DB2API-Exposure
+cd QueryGateway
 ```
 
 ### 2. Backend
@@ -50,9 +50,9 @@ npm install
 ```sh
 # Copy root env example
 cp .env.example .env
-# Edit .env to set JWT_SECRET_KEY
+# Edit .env to set JWT_SECRET_KEY and ENCRYPTION_KEY
 
-docker compose up -d
+docker compose up -d --build
 ```
 
 Compose runs the one-shot `migrate` service before the API starts, so a fresh local `db_data` volume is initialized automatically.
@@ -126,6 +126,10 @@ make docker-build
 5. Run all checks for the area you changed.
 6. Update `docs/` if you changed API contracts, config, or significant behavior.
 7. Open a PR against `main`.
+
+For endpoint parameter, schedule binding, or snapshot filtering changes, update
+[the canonical parameter contract](scheduler_parameter_bindings.md) and keep the related root and
+`.github/instructions/` agent guidance aligned.
 
 ## What CI Checks
 

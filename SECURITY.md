@@ -67,19 +67,14 @@ item-by-item list) plus the standards every change is expected to uphold.
 ### 3.1 Authentication & Authorization
 
 - Authentication on data endpoints (`/api/v1/data/*`) is configured **per
-  endpoint**. An endpoint is protected only when an auth method is attached to
-  it. Serving an endpoint **without** an auth method (public/unauthenticated)
-  is allowed but must be a **deliberate, explicit choice**: the admin API
-  rejects a create or update that would leave an endpoint with no auth method
-  unless `allow_unauthenticated` is set to `true` (`422` otherwise). The data
-  plane enforces the same invariant at request time — an endpoint with no auth
-  method **and** no opt-in (e.g. after its referenced auth method is deleted,
-  which nulls the reference) **default-denies with `401`** instead of serving —
-  so an endpoint can never become silently public by omission or out-of-band.
-  Each request to a genuinely public (opted-in) endpoint is logged at `WARNING`
-  with `event="public_endpoint_served"`; the default-deny path logs
-  `event="unauthenticated_endpoint_denied"`. Review public endpoints
-  periodically for unintended exposure.
+  endpoint** and anonymous data access is never allowed. When an endpoint auth
+  method is attached, the data plane enforces that Bearer, Basic, or API-key
+  policy. When no dedicated method is attached, the legacy-named
+  `allow_unauthenticated=true` value explicitly selects the platform-admin
+  Bearer fallback; it does **not** make the endpoint public. A configuration
+  with neither path is rejected by the admin API and default-denied with `401`
+  by the data plane. The denied path logs
+  `event="unauthenticated_endpoint_denied"` with the required request context.
 - When an auth method **is** attached but is missing or inactive at request
   time, the endpoint **default-denies** with `401` (it never silently falls
   open). Expired or malformed credentials likewise return `401`, never `500`.
@@ -132,12 +127,21 @@ item-by-item list) plus the standards every change is expected to uphold.
   stack traces, Oracle connection strings, and internal schema details are
   never leaked to clients.
 - Enforce string-length limits and enum validation on all user-supplied fields.
+- Enforce every endpoint parameter marked `required` for both live and
+  snapshot HTTP requests, even if the endpoint stores a default. Preview
+  samples are temporary, optional live defaults are request behavior, and
+  schedule bindings are a separate persisted contract.
+- Parameterized snapshot endpoints must map every request parameter to a final
+  cached output column and an allowlisted typed comparison. The data plane
+  proves coverage from persisted job-run parameters before filtering rows; it
+  never falls back to returning an unfiltered snapshot. Snapshot mappings are
+  data selection, not tenant authorization.
 
 ### 3.5 Logging, Auditing & Privacy
 
 - Use **structured logging** everywhere. Mandatory fields: `request_id`,
-  `user`, `endpoint`, `status`, `duration_ms`, `event`; scheduler jobs add
-  `job_id`, `run_id`, `row_count`, `success`.
+  `user`, `endpoint`, `status`, `duration_ms`, `method`, `client_ip`, `event`;
+  scheduler jobs add `job_id`, `run_id`, `row_count`, `success`.
 - Redact secrets and high-risk fields at logging boundaries; log the minimum
   PII required for the operation.
 - Every data-endpoint request is access-logged with path, method, principal,
@@ -147,8 +151,12 @@ item-by-item list) plus the standards every change is expected to uphold.
 
 - Scheduled jobs use stored, encrypted connection credentials — never
   request-time credentials.
-- Job execution errors are recorded internally and never surfaced to data-API
-  consumers (the data endpoint returns `503`).
+- Scheduled jobs resolve every SQL bind from schedule-owned declarative
+  bindings (`literal`, `null`, logical/relative run date, or window boundary).
+  They never inherit endpoint request defaults.
+- Job execution errors are recorded internally and never expose Oracle details to data-API
+  consumers. Snapshot requests use another retained covering run when available and return `503`
+  when no retained snapshot exists.
 - Concurrency is bounded (`max_instances=1` per job, `max_job_concurrency`) and
   snapshot retention is capped to prevent resource and storage exhaustion.
 

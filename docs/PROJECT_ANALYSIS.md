@@ -1,5 +1,13 @@
 # QueryGateway: Project Analysis & Manifesto
 
+> **Historical analysis with current implementation notes (updated 2026-08-31).** This document
+> records the product and technology evaluation that preceded implementation. The authoritative
+> runtime contract is now [Architecture](architecture.md), and endpoint/scheduler/snapshot
+> parameter behavior is defined in [Parameter contracts](scheduler_parameter_bindings.md).
+> QueryGateway currently runs Python 3.14+, a Vite + React admin SPA, an in-process APScheduler
+> whose PostgreSQL schedule definitions are restored at startup, schedule-owned SQL bindings, and
+> coverage-aware typed snapshot filtering.
+
 ## 1. Executive Summary
 
 **Project Name:** QueryGateway
@@ -329,7 +337,7 @@ A step-by-step wizard flow:
 | **Oracle Connectivity** | python-oracledb | Official Oracle Python driver; thin mode (no Oracle Client needed) |
 | **ORM / Query Layer** | SQLAlchemy 2.0 | Database abstraction for future multi-DB support |
 | **App Database** | PostgreSQL | Stores connections, endpoints, schedules, logs, cached results |
-| **Task Scheduling** | APScheduler | Python-native scheduler with cron triggers; persistent job store in PostgreSQL |
+| **Task Scheduling** | APScheduler | Python-native in-process scheduler; definitions persist in PostgreSQL and active jobs are restored on startup |
 | **Frontend** | Next.js 14+ (App Router) | User preference; SSR/SSG capabilities |
 | **UI Components** | shadcn/ui + Tailwind CSS | User preference; modern, accessible component library |
 | **Testing** | pytest + pytest-asyncio | User preference; comprehensive async test support |
@@ -501,7 +509,8 @@ The proposed stack from Section 3.4 is evaluated below on a component-by-compone
 - *Risk:* FastAPI's dependency injection system can become complex in large applications. *Mitigation:* Establish clear patterns early (service layer, repository pattern) and document conventions.
 - *Risk:* Python GIL limits true CPU parallelism. *Mitigation:* Not a concern — this project is I/O-bound (DB queries, HTTP serving), not CPU-bound.
 
-**Recommendation:** Python 3.12+ (instead of 3.11+) should be targeted. Python 3.12 brings significant performance improvements (10-15% faster), better error messages, and will have longer support. Python 3.11 EOL is October 2027; Python 3.12 EOL is October 2028.
+**Implemented target:** Python 3.14+. The repository's Ruff, mypy, dependencies, Docker image, and
+developer setup all use Python 3.14 or newer.
 
 ---
 
@@ -563,7 +572,7 @@ The proposed stack from Section 3.4 is evaluated below on a component-by-compone
 | Criterion | Assessment |
 |-----------|-----------|
 | **Cron Triggers** | Full cron expression support matches the scheduling requirements in Module 4. |
-| **Persistent Job Store** | PostgreSQL-backed job store ensures scheduled jobs survive application restarts. |
+| **Restart restoration** | Schedule definitions and next-run metadata persist in PostgreSQL; the single API process restores active jobs into APScheduler's in-memory job store at startup. |
 | **Python-Native** | Runs in-process, no external dependencies (no Redis, no RabbitMQ, no Celery). |
 | **Dynamic Jobs** | Jobs can be added, modified, paused, and removed at runtime — essential for the wizard-based scheduling flow. |
 
