@@ -88,4 +88,80 @@ describe("ConfigStep snapshot scheduling guidance", () => {
       screen.getByText(/Scheduled values are configured with the schedule/i),
     ).toBeInTheDocument();
   });
+
+  it("configures an explicit cached column and operator for every parameter", () => {
+    const update = vi.fn();
+    render(
+      <ConfigStep
+        state={makeState({
+          data_strategy: "snapshot",
+          param_schema: {
+            start_date: { type: "date", required: true, default: null },
+          },
+        })}
+        update={update}
+        authMethods={[]}
+        previewColumns={["business_date", "store_id"]}
+      />,
+    );
+
+    expect(screen.getByText(/Snapshot request filters/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Snapshot column for start_date"), {
+      target: { value: "business_date" },
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      param_schema: {
+        start_date: {
+          type: "date",
+          required: true,
+          default: null,
+          snapshot_filter: {
+            column: "business_date",
+            operator: "eq",
+            null_means_all: false,
+          },
+        },
+      },
+    });
+  });
+
+  it("allows an optional equality filter to declare scheduled NULL as all values", () => {
+    const update = vi.fn();
+    render(
+      <ConfigStep
+        state={makeState({
+          data_strategy: "snapshot",
+          param_schema: {
+            store_id: {
+              type: "integer",
+              required: false,
+              default_is_null: true,
+              snapshot_filter: {
+                column: "store_id",
+                operator: "eq",
+                null_means_all: false,
+              },
+            },
+          },
+        })}
+        update={update}
+        authMethods={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Scheduled NULL covers all store_id values"));
+
+    expect(update).toHaveBeenCalledWith({
+      param_schema: {
+        store_id: expect.objectContaining({
+          snapshot_filter: {
+            column: "store_id",
+            operator: "eq",
+            null_means_all: true,
+          },
+        }),
+      },
+    });
+  });
 });

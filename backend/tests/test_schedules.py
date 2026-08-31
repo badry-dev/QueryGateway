@@ -264,8 +264,22 @@ async def _create_snapshot_endpoint_with_date_range(client: object) -> str:
                 "SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"
             ),
             "param_schema": {
-                "start_date": {"type": "date", "required": True},
-                "end_date": {"type": "date", "required": True},
+                "start_date": {
+                    "type": "date",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "gte",
+                    },
+                },
+                "end_date": {
+                    "type": "date",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "lte",
+                    },
+                },
             },
             "data_strategy": "snapshot",
         },
@@ -347,8 +361,22 @@ async def test_endpoint_update_cannot_invalidate_attached_schedule(
         f"/api/v1/admin/endpoints/{endpoint_id}",
         json={
             "param_schema": {
-                "start_date": {"type": "string", "required": True},
-                "end_date": {"type": "date", "required": True},
+                "start_date": {
+                    "type": "string",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "gte",
+                    },
+                },
+                "end_date": {
+                    "type": "date",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "lte",
+                    },
+                },
             }
         },
     )
@@ -359,8 +387,22 @@ async def test_endpoint_update_cannot_invalidate_attached_schedule(
         f"/api/v1/admin/endpoints/{endpoint_id}",
         json={
             "param_schema": {
-                "start_date": {"type": "date", "required": True},
-                "replacement_end_date": {"type": "date", "required": True},
+                "start_date": {
+                    "type": "date",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "gte",
+                    },
+                },
+                "replacement_end_date": {
+                    "type": "date",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "lte",
+                    },
+                },
             }
         },
     )
@@ -640,7 +682,12 @@ async def test_create_schedule_with_invalid_stored_schema_returns_422(
             "connection_id": connection.json()["id"],
             "sql_text": "SELECT * FROM stores WHERE id = :store_id",
             "param_schema": {
-                "store_id": {"type": "integer", "required": True, "default": 1}
+                "store_id": {
+                    "type": "integer",
+                    "required": True,
+                    "default": 1,
+                    "snapshot_filter": {"column": "id", "operator": "eq"},
+                }
             },
             "allow_unauthenticated": True,
             "data_strategy": "snapshot",
@@ -653,9 +700,7 @@ async def test_create_schedule_with_invalid_stored_schema_returns_422(
         update(ApiEndpoint)
         .where(ApiEndpoint.id == endpoint_id)
         .values(
-            param_schema_json={
-                "store_id": {"type": "integer", "required": True, "default": "abc"}
-            }
+            param_schema_json={"store_id": {"type": "integer", "required": True, "default": "abc"}}
         )
     )
     await session.flush()

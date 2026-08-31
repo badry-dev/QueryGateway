@@ -31,6 +31,7 @@ from app.schemas.endpoint import (
     SqlPreviewRequest,
     SqlPreviewResponse,
     extract_bind_params,
+    require_snapshot_filter_mappings,
 )
 from app.services.schedule_bindings import ScheduleBindingError, resolve_schedule_parameters
 from app.sql.executor import SqlExecutionError, execute_query
@@ -205,9 +206,7 @@ class EndpointService:
 
         # Handle param_schema serialization
         if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
-            effective_param_schema = {
-                k: v.model_dump() for k, v in payload.param_schema.items()
-            }
+            effective_param_schema = {k: v.model_dump() for k, v in payload.param_schema.items()}
             changes["param_schema_json"] = effective_param_schema
             changes.pop("param_schema", None)
 
@@ -216,10 +215,12 @@ class EndpointService:
             changes["column_map_json"] = dict(payload.column_map)
             changes.pop("column_map", None)
 
+        effective_strategy = payload.data_strategy or obj.data_strategy
+        require_snapshot_filter_mappings(effective_strategy, effective_param_schema)
+
         if self._schedule_repo is not None:
             schedule = await self._schedule_repo.get_by_endpoint_id(endpoint_id)
             if schedule is not None:
-                effective_strategy = payload.data_strategy or obj.data_strategy
                 if effective_strategy != DataStrategy.snapshot:
                     raise ScheduleBindingError(
                         "Delete the attached schedule before changing this endpoint to live data."

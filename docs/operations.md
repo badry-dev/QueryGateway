@@ -230,6 +230,9 @@ docker compose logs api --tail 50
 
 1. **Check endpoint config**: `GET /api/v1/admin/endpoints/{id}`
 2. **Verify parameters**: Required params must be provided in query string
+   - Snapshot endpoints additionally require a cached-column mapping for every parameter.
+   - `snapshot_filter_not_configured` means an older endpoint must be updated in the endpoint edit dialog.
+   - `snapshot_out_of_coverage` means no retained job run contains the requested range/value; inspect the schedule bindings, window, and snapshot retention.
 3. **Check column mapping**: `column_map_json` may rename output columns
 4. **Snapshot staleness**: For snapshot endpoints, check the `snapshot_created_at` in response
 5. **SQL syntax**: Use the SQL preview feature to test queries interactively

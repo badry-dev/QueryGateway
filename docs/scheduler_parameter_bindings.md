@@ -62,6 +62,57 @@ POST /api/v1/admin/schedules/preview
 
 The response contains the next one to ten nominal fire times (three by default), logical dates, window boundaries, and resolved typed parameters.
 
+## Snapshot request filters and coverage
+
+Schedule bindings decide which rows Oracle loads into a snapshot. Public request parameters decide which rows are returned from that cache. Every parameterized snapshot endpoint must explicitly map each request parameter to a cached output column (after `column_map` renaming) and one whitelisted comparison:
+
+| Operator | Row selection | Coverage requirement |
+|---|---|---|
+| `eq` | Cached column equals the request value | Scheduled value equals the request value |
+| `gte` | Cached column is greater than or equal to the request value | Scheduled lower bound is less than or equal to the request lower bound |
+| `lte` | Cached column is less than or equal to the request value | Scheduled upper bound is greater than or equal to the request upper bound |
+
+Example endpoint parameter schema:
+
+```json
+{
+  "start_date": {
+    "type": "date",
+    "required": true,
+    "snapshot_filter": { "column": "business_date", "operator": "gte" }
+  },
+  "end_date": {
+    "type": "date",
+    "required": true,
+    "snapshot_filter": { "column": "business_date", "operator": "lte" }
+  },
+  "store_id": {
+    "type": "integer",
+    "required": false,
+    "default_is_null": true,
+    "snapshot_filter": {
+      "column": "store_id",
+      "operator": "eq",
+      "null_means_all": true
+    }
+  }
+}
+```
+
+`null_means_all` is valid only for `eq`. It means a schedule run whose resolved value is SQL `NULL` covers every requested value for that parameter. When that optional request parameter is omitted, a fixed-value snapshot is treated as only a subset and the selector continues to an all-value snapshot. This flag does not make a required HTTP parameter optional. A parameter such as `store_id` is an ordinary row filter here; it is not tenant authorization. Authentication and authorization remain the responsibility of the endpoint's configured auth method.
+
+The data plane checks retained snapshots newest first and selects the newest snapshot whose persisted job-run parameters cover the request. Behavior is explicit:
+
+- Missing or invalid required parameters return HTTP 422.
+- A lower bound greater than its upper bound returns HTTP 422 with `code=invalid_parameter_range`.
+- A valid request outside all retained coverage returns HTTP 422 with `code=snapshot_out_of_coverage`.
+- A request inside coverage with no matching business rows returns HTTP 200 with `data: []`.
+- An endpoint created before this contract without complete mappings returns HTTP 422 with `code=snapshot_filter_not_configured`; add mappings through the endpoint edit dialog or admin update API.
+- A mapping that does not exist in a non-empty cached row returns HTTP 422 with `code=snapshot_filter_column_unavailable`.
+- No retained snapshot still returns HTTP 503.
+
+The mapping is stored inside the endpoint's existing JSON parameter schema, so it requires no relational database migration.
+
 ## Logical time, retries, and manual runs
 
 Cron expressions and run dates are evaluated in the schedule's IANA timezone. Normal execution uses the persisted nominal `next_run_at` as `scheduled_for`, not the wall-clock time at which a delayed job starts. Job runs store the resolved context and a binding-configuration hash. A unique `(schedule_id, scheduled_for)` key prevents duplicate execution of the same logical run.

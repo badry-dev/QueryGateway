@@ -39,6 +39,12 @@ export function ReviewStep({ state, connections, authMethods }: ReviewStepProps)
                 <span key={name} className="block">
                   <code>:{name}</code> — {descriptor.type}; default:{" "}
                   {describeParameterDefault(descriptor)}
+                  {state.data_strategy === "snapshot" && descriptor.snapshot_filter && (
+                    <>
+                      ; snapshot: {descriptor.snapshot_filter.column}{" "}
+                      {descriptor.snapshot_filter.operator}
+                    </>
+                  )}
                 </span>
               ))}
             </span>

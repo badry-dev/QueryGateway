@@ -43,7 +43,7 @@
 
 All user-defined SQL is executed via SQLAlchemy `text()` with named bind parameters (`:param_name`). String interpolation of user input is prohibited at all layers. Bind values are validated through typed Pydantic schemas before reaching the query executor.
 
-Live data requests enforce every parameter marked `required`. Endpoint defaults apply only to live request/preview behavior; they are not scheduler configuration. Date query parameters accept `YYYY-MM-DD` and `DD-MM-YYYY`; both formats are normalized to Python `date` values before database binding.
+Live and snapshot data requests enforce every parameter marked `required`. Endpoint defaults apply only to live request/preview behavior; they are not scheduler configuration. Date query parameters accept `YYYY-MM-DD` and `DD-MM-YYYY`; both formats are normalized to Python `date` values before database binding.
 
 ### Authentication
 
@@ -59,7 +59,7 @@ The scheduler is intentionally single-process. Run one API process/replica unles
 
 ### Snapshot Cache
 
-Scheduled endpoints can serve results from a PostgreSQL JSONB snapshot rather than executing live queries. Schedule creation requires exact coverage of the endpoint's SQL binds. The declarative binding sources are fixed literal, explicit SQL `NULL` for an optional bind, logical run date, relative logical date, and inclusive window start/end. Supported windows are previous day, last N complete days, week to date, previous week, month to date, and previous month. Arbitrary Python, JavaScript, and SQL expressions are intentionally unsupported. See [Scheduler parameter bindings](scheduler_parameter_bindings.md) for the API contract and date semantics.
+Scheduled endpoints can serve results from a PostgreSQL JSONB snapshot rather than executing live queries. Schedule creation requires exact coverage of the endpoint's SQL binds. The declarative binding sources are fixed literal, explicit SQL `NULL` for an optional bind, logical run date, relative logical date, and inclusive window start/end. Supported windows are previous day, last N complete days, week to date, previous week, month to date, and previous month. Each snapshot endpoint parameter also declares an explicit cached-output-column mapping and one whitelisted operator (`eq`, `gte`, or `lte`). The data plane validates request types and required fields, selects the newest retained job snapshot whose resolved schedule values cover the request, and filters the cached rows. These mappings are data selection only; tenant authorization continues to be owned by the endpoint authentication method. Arbitrary Python, JavaScript, and SQL expressions are intentionally unsupported. See [Scheduler parameter bindings](scheduler_parameter_bindings.md) for the API contract and date semantics.
 
 ### Configuration
 
