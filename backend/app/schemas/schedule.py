@@ -8,6 +8,23 @@ from pydantic import BaseModel, Field, field_validator
 # ── Schedule schemas ─────────────────────────────────────────────────────────
 
 
+def _validate_cron_expression(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    parts = normalized.split()
+    if len(parts) != 5:
+        raise ValueError("Cron expression must have exactly 5 fields.")
+
+    from apscheduler.triggers.cron import CronTrigger  # noqa: PLC0415
+
+    try:
+        CronTrigger.from_crontab(normalized)
+    except ValueError as exc:
+        raise ValueError(f"Invalid cron expression: {exc}") from exc
+    return normalized
+
+
 class ScheduleCreate(BaseModel):
     endpoint_id: uuid.UUID
     schedule_type: str = Field(..., pattern=r"^(cron|interval)$")
@@ -17,14 +34,9 @@ class ScheduleCreate(BaseModel):
 
     @field_validator("cron_expression")
     @classmethod
-    def validate_cron(cls, v: str | None, info: object) -> str | None:
-        """Basic cron expression validation (5-field format)."""
-        if v is None:
-            return v
-        parts = v.strip().split()
-        if len(parts) != 5:
-            raise ValueError("Cron expression must have exactly 5 fields.")
-        return v.strip()
+    def validate_cron(cls, v: str | None) -> str | None:
+        """Validate cron syntax and ranges with APScheduler's parser."""
+        return _validate_cron_expression(v)
 
     @field_validator("interval_seconds")
     @classmethod
@@ -37,9 +49,7 @@ class ScheduleCreate(BaseModel):
         if self.schedule_type == "cron" and not self.cron_expression:
             raise ValueError("cron_expression is required when schedule_type is 'cron'.")
         if self.schedule_type == "interval" and not self.interval_seconds:
-            raise ValueError(
-                "interval_seconds is required when schedule_type is 'interval'."
-            )
+            raise ValueError("interval_seconds is required when schedule_type is 'interval'.")
 
 
 class ScheduleUpdate(BaseModel):
@@ -47,6 +57,11 @@ class ScheduleUpdate(BaseModel):
     cron_expression: str | None = None
     interval_seconds: int | None = Field(None, ge=10)
     is_active: bool | None = None
+
+    @field_validator("cron_expression")
+    @classmethod
+    def validate_cron(cls, v: str | None) -> str | None:
+        return _validate_cron_expression(v)
 
 
 class ScheduleResponse(BaseModel):
@@ -69,8 +84,8 @@ class ScheduleResponse(BaseModel):
 
 class JobRunResponse(BaseModel):
     id: uuid.UUID
-    schedule_id: uuid.UUID
-    endpoint_id: uuid.UUID
+    schedule_id: uuid.UUID | None
+    endpoint_id: uuid.UUID | None
     started_at: datetime
     finished_at: datetime | None
     status: str

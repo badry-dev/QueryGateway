@@ -42,8 +42,9 @@ _GOLDEN_CASES: list[tuple[dict[str, object], str, object]] = [
     ({"type": "boolean", "required": True}, "false", False),
     ({"type": "boolean", "required": True}, "0", False),
     ({"type": "boolean", "required": True}, "NO", False),
-    # date — must be ISO format
+    # date — public API accepts ISO and the Oracle-oriented DD-MM-YYYY format
     ({"type": "date", "required": True}, "2024-01-15", date(2024, 1, 15)),
+    ({"type": "date", "required": True}, "15-01-2024", date(2024, 1, 15)),
 ]
 
 _GOLDEN_FAILURES: list[tuple[dict[str, object], str]] = [
@@ -69,9 +70,7 @@ def test_build_param_model_coerces_value(
 
 
 @pytest.mark.parametrize(("descriptor", "raw"), _GOLDEN_FAILURES)
-def test_build_param_model_rejects_value(
-    descriptor: dict[str, object], raw: str
-) -> None:
+def test_build_param_model_rejects_value(descriptor: dict[str, object], raw: str) -> None:
     Model = build_param_model({"p": descriptor})
     with pytest.raises(ValidationError):
         Model.model_validate({"p": raw})
@@ -140,10 +139,7 @@ def test_build_param_model_boolean_default_round_trips() -> None:
 
 
 def test_build_param_model_default_applies_when_required_and_missing() -> None:
-    """Legacy code applied a configured ``default`` whenever the param was
-    missing — regardless of the ``required`` flag. Pin that contract here
-    so the Pydantic-based path doesn't 422 endpoints whose stored schema
-    combined ``required=true`` with a non-null default."""
+    """Default-resolution mode lets scheduled jobs resolve required binds."""
     Model = build_param_model(
         {"p": {"type": "integer", "required": True, "default": 42}},
     )
@@ -181,3 +177,87 @@ def test_build_param_model_optional_without_default_accepts_value() -> None:
     Model = build_param_model({"p": {"type": "integer", "required": False}})
     instance = Model.model_validate({"p": "42"})
     assert instance.model_dump()["p"] == 42
+
+
+def test_build_param_model_enforces_required_despite_static_default() -> None:
+    Model = build_param_model(
+        {"p": {"type": "integer", "required": True, "default": 42}},
+        enforce_required=True,
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        Model.model_validate({})
+    assert any(err["loc"] == ("p",) for err in exc_info.value.errors())
+
+
+def test_build_param_model_enforces_required_despite_dynamic_default() -> None:
+    Model = build_param_model(
+        {
+            "p": {
+                "type": "date",
+                "required": True,
+                "default_expression": "today",
+            }
+        },
+        current_date=date(2026, 8, 30),
+        enforce_required=True,
+    )
+    with pytest.raises(ValidationError) as exc_info:
+        Model.model_validate({})
+    assert any(err["loc"] == ("p",) for err in exc_info.value.errors())
+
+
+def test_build_param_model_required_value_overrides_scheduler_default() -> None:
+    Model = build_param_model(
+        {
+            "p": {
+                "type": "date",
+                "required": True,
+                "default_expression": "today",
+            }
+        },
+        current_date=date(2026, 8, 30),
+        enforce_required=True,
+    )
+    assert Model.model_validate({"p": "15-01-2026"}).model_dump()["p"] == date(2026, 1, 15)
+
+
+def test_build_param_model_explicit_null_default_binds_none() -> None:
+    Model = build_param_model({"p": {"type": "string", "required": False, "default_is_null": True}})
+    instance = Model.model_validate({})
+    assert instance.model_dump() == {"p": None}
+
+
+def test_build_param_model_explicit_value_overrides_null_default() -> None:
+    Model = build_param_model({"p": {"type": "string", "required": False, "default_is_null": True}})
+    instance = Model.model_validate({"p": "10105"})
+    assert instance.model_dump() == {"p": "10105"}
+
+
+def test_build_param_model_resolves_today_expression() -> None:
+    Model = build_param_model(
+        {"p": {"type": "date", "required": True, "default_expression": "today"}},
+        current_date=date(2026, 8, 30),
+    )
+    assert Model.model_validate({}).model_dump()["p"] == date(2026, 8, 30)
+
+
+def test_build_param_model_resolves_yesterday_expression() -> None:
+    Model = build_param_model(
+        {
+            "p": {
+                "type": "date",
+                "required": True,
+                "default_expression": "yesterday",
+            }
+        },
+        current_date=date(2026, 8, 30),
+    )
+    assert Model.model_validate({}).model_dump()["p"] == date(2026, 8, 29)
+
+
+def test_build_param_model_explicit_value_overrides_dynamic_default() -> None:
+    Model = build_param_model(
+        {"p": {"type": "date", "required": True, "default_expression": "today"}},
+        current_date=date(2026, 8, 30),
+    )
+    assert Model.model_validate({"p": "2026-01-15"}).model_dump()["p"] == date(2026, 1, 15)

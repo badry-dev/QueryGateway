@@ -1,11 +1,14 @@
 /** TypeScript interfaces for API endpoint management (Phase 4). */
 
 export type DataStrategy = "live" | "snapshot";
+export type DateDefaultExpression = "today" | "yesterday";
 
 export interface ParamDescriptor {
   type: "string" | "integer" | "float" | "date" | "boolean";
   required: boolean;
   default?: string | number | boolean | null;
+  default_is_null?: boolean;
+  default_expression?: DateDefaultExpression | null;
   description?: string;
 }
 
@@ -38,7 +41,7 @@ export interface EndpointCreate {
   param_schema?: Record<string, ParamDescriptor>;
   column_map?: Record<string, string>;
   auth_method_id?: string | null;
-  /** Explicit opt-in to a public (unauthenticated) endpoint; required when auth_method_id is null. */
+  /** Legacy-named opt-in to platform-admin Bearer fallback when auth_method_id is null. */
   allow_unauthenticated?: boolean;
   data_strategy?: DataStrategy;
   is_active?: boolean;

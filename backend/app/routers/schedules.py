@@ -29,6 +29,7 @@ from app.repositories.endpoint import EndpointRepository
 from app.repositories.job_run import JobRunRepository
 from app.repositories.schedule import ScheduleRepository
 from app.repositories.snapshot import SnapshotRepository
+from app.schemas.endpoint import SnapshotConfigurationError
 from app.schemas.schedule import (
     JobRunResponse,
     ScheduleCreate,
@@ -38,6 +39,7 @@ from app.schemas.schedule import (
     SnapshotResponse,
 )
 from app.services.schedule import ScheduleService
+from app.services.scheduler import remove_schedule_job
 
 log = structlog.get_logger()
 
@@ -85,6 +87,10 @@ async def create_schedule(
 ) -> ScheduleResponse:
     try:
         result = await svc.create_schedule(payload)
+    except SnapshotConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
@@ -151,6 +157,7 @@ async def delete_schedule(
             status_code=status.HTTP_404_NOT_FOUND, detail="Schedule not found."
         )
     await db.commit()
+    remove_schedule_job(schedule_id)
 
 
 # ── Control actions ──────────────────────────────────────────────────────────

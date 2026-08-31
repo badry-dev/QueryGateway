@@ -21,15 +21,18 @@ from app.auth.admin import get_current_admin
 from app.dependencies import get_db
 from app.repositories.connection import ConnectionRepository
 from app.repositories.endpoint import EndpointRepository
+from app.repositories.schedule import ScheduleRepository
 from app.schemas.endpoint import (
     EndpointCreate,
     EndpointResponse,
     EndpointUpdate,
     PublicEndpointError,
+    SnapshotConfigurationError,
     SqlPreviewRequest,
     SqlPreviewResponse,
 )
 from app.services.endpoint import EndpointService
+from app.services.scheduler import remove_schedule_job
 
 log = structlog.get_logger()
 
@@ -72,14 +75,12 @@ async def create_endpoint(
 ) -> EndpointResponse:
     try:
         result = await svc.create_endpoint(payload)
-    except PublicEndpointError as exc:
+    except (PublicEndpointError, SnapshotConfigurationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     await db.commit()
     return result
 
@@ -95,9 +96,7 @@ async def get_endpoint(
 ) -> EndpointResponse:
     result = await svc.get_endpoint(endpoint_id)
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found.")
     return result
 
 
@@ -114,18 +113,14 @@ async def update_endpoint(
 ) -> EndpointResponse:
     try:
         result = await svc.update_endpoint(endpoint_id, payload)
-    except PublicEndpointError as exc:
+    except (PublicEndpointError, SnapshotConfigurationError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found.")
     await db.commit()
     return result
 
@@ -140,12 +135,14 @@ async def delete_endpoint(
     db: AsyncSession = Depends(get_db),
     svc: EndpointService = Depends(_service),
 ) -> None:
+    schedule = await ScheduleRepository(db).get_by_endpoint_id(endpoint_id)
+    schedule_id = schedule.id if schedule is not None else None
     deleted = await svc.delete_endpoint(endpoint_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found."
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found.")
     await db.commit()
+    if schedule_id is not None:
+        remove_schedule_job(schedule_id)
 
 
 @router.post(
@@ -164,6 +161,4 @@ async def preview_sql(
     try:
         return await svc.preview_sql(payload)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

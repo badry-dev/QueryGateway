@@ -86,7 +86,7 @@ pip install -r requirements.txt
 alembic upgrade head
 
 # Start the server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 For production, use a process manager:
@@ -96,11 +96,13 @@ For production, use a process manager:
 pip install gunicorn
 gunicorn app.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
-  --workers 4 \
+  --workers 1 \
   --bind 0.0.0.0:8000 \
   --access-logfile - \
   --error-logfile -
 ```
+
+Keep exactly one API worker while APScheduler uses its in-process job store. Each worker restores active schedules during startup, so multiple workers or replicas would execute duplicate snapshot refreshes until distributed scheduler coordination is implemented.
 
 #### Frontend Setup
 
@@ -156,26 +158,50 @@ psql -c "CREATE DATABASE db2api_db OWNER db2api_user;"
 
 Use the Docker images as a starting point. Key considerations:
 
-- Deploy the API as a `Deployment` with `replicas: 2+`
+- Deploy the API as a `Deployment` with `replicas: 1` and `strategy.type: Recreate`
+  while the scheduler is in-process. A rolling update can overlap the old and new
+  Pods even with one replica, causing both schedulers to execute the same jobs.
+- Add distributed scheduler coordination before using rolling updates or multiple
+  API replicas.
 - Use a `Service` for internal routing and an `Ingress` for external access
 - PostgreSQL: use a managed service (e.g., AWS RDS, GCP Cloud SQL) or a StatefulSet
 - Store `ENCRYPTION_KEY` and `DATABASE_URL` as Kubernetes Secrets
 - Configure liveness and readiness probes:
 
 ```yaml
-livenessProbe:
-  httpGet:
-    path: /api/v1/admin/health/live
-    port: 8000
-  initialDelaySeconds: 10
-  periodSeconds: 30
-
-readinessProbe:
-  httpGet:
-    path: /api/v1/admin/health/ready
-    port: 8000
-  initialDelaySeconds: 5
-  periodSeconds: 10
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: querygateway-api
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: querygateway-api
+  template:
+    metadata:
+      labels:
+        app: querygateway-api
+    spec:
+      containers:
+        - name: api
+          image: your-registry/querygateway-api:latest
+          ports:
+            - containerPort: 8000
+          livenessProbe:
+            httpGet:
+              path: /api/v1/admin/health/live
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/admin/health/ready
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
 ```
 
 ## Database Migrations
@@ -221,7 +247,7 @@ alembic downgrade -1
 4. **Create first connection**: Use the Connections page to add an Oracle data source
 5. **Test connection**: Click "Test" to verify Oracle connectivity
 6. **Create first endpoint**: Use the API Endpoints page wizard
-7. **Verify data endpoint**: `curl http://localhost:8000/api/v1/data/<your-path>`
+7. **Verify data endpoint**: `curl -H "Authorization: Bearer <token>" http://localhost:8000/api/v1/data/<your-path>`
 
 ## Security Hardening for Production
 

@@ -96,7 +96,7 @@ Comprehensive security validation for QueryGateway production deployments. All i
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 51 | Public (no-auth) endpoints require explicit opt-in; orphaned ones default-deny | Verified | M1: create/update reject `auth_method_id=None` without `allow_unauthenticated=true` (422). Data plane **default-denies with 401** (`unauthenticated_endpoint_denied`) when an endpoint has no auth method and no opt-in — e.g. after its auth method is deleted (FK SET NULL); genuinely public hits log `public_endpoint_served` |
+| 51 | Every dynamic data endpoint requires authentication | Verified | A configured endpoint method is enforced when present. Otherwise the legacy `allow_unauthenticated=true` value opts into platform-admin Bearer fallback; it never permits anonymous access. Missing or invalid credentials return 401 and log `unauthenticated_endpoint_denied`. |
 | 52 | App refuses to boot with wildcard CORS under credentials | Verified | M3: `cors_origins` validator rejects `*` at startup |
 | 53 | API keys accepted only via header, not query string | Verified | L1: `X-Api-Key` only; `?api_key=` fallback removed |
 | 54 | Sensitive keys redacted at the logging boundary | Verified | L2: structlog processor masks password/secret/token/api_key/key/authorization/signing_secret |

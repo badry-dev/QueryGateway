@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { SqlPreviewResponse } from "@/types/endpoint";
 
+import { hasParameterDefault } from "./parameterDefaults";
 import type { WizardState, WizardUpdate } from "./types";
 
 interface SqlStepProps {
@@ -28,7 +29,7 @@ export function SqlStep({
   const bindParams = Object.entries(state.param_schema);
   const hasPreviewValues = bindParams.every(([name, descriptor]) => {
     const value = previewParams[name];
-    return value !== undefined ? value.trim().length > 0 : descriptor.default != null;
+    return value !== undefined && value.trim().length > 0 ? true : hasParameterDefault(descriptor);
   });
 
   return (

@@ -77,4 +77,52 @@ describe("SqlStep preview parameters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview Query" }));
     expect(onPreview).toHaveBeenCalledOnce();
   });
+
+  it("allows preview when an optional parameter has an explicit NULL default", () => {
+    const state = makeState();
+    state.param_schema.customer_id = {
+      type: "string",
+      required: false,
+      default: null,
+      default_is_null: true,
+    };
+
+    render(
+      <SqlStep
+        state={state}
+        update={vi.fn()}
+        preview={null}
+        previewParams={{}}
+        isPreviewing={false}
+        onPreview={vi.fn()}
+        onUpdatePreviewParam={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Preview Query" })).toBeEnabled();
+  });
+
+  it("allows preview when a date parameter has a dynamic default", () => {
+    const state = makeState();
+    state.param_schema.customer_id = {
+      type: "date",
+      required: true,
+      default: null,
+      default_expression: "today",
+    };
+
+    render(
+      <SqlStep
+        state={state}
+        update={vi.fn()}
+        preview={null}
+        previewParams={{}}
+        isPreviewing={false}
+        onPreview={vi.fn()}
+        onUpdatePreviewParam={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Preview Query" })).toBeEnabled();
+  });
 });

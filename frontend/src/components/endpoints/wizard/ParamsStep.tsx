@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -16,65 +18,145 @@ interface DefaultValueControlProps {
   onUpdateParam: (name: string, field: keyof ParamDescriptor, value: unknown) => void;
 }
 
+interface ScalarDefaultControlProps extends DefaultValueControlProps {
+  children: ReactNode;
+}
+
+function ScalarDefaultControl({ desc, name, onUpdateParam, children }: ScalarDefaultControlProps) {
+  if (desc.required) return <div className="mt-1">{children}</div>;
+
+  return (
+    <div className="mt-1 space-y-1.5">
+      <Select
+        aria-label={`Default mode for ${name}`}
+        className="h-8 px-2 py-1.5"
+        value={desc.default_is_null ? "null" : "fixed"}
+        onChange={(e) => onUpdateParam(name, "default_is_null", e.target.value === "null")}
+      >
+        <option value="fixed">Fixed value</option>
+        <option value="null">Null</option>
+      </Select>
+      {desc.default_is_null ? (
+        <p className="text-xs text-muted-foreground">Passes SQL NULL when omitted.</p>
+      ) : (
+        children
+      )}
+    </div>
+  );
+}
+
 function DefaultValueControl({ desc, name, onUpdateParam }: DefaultValueControlProps) {
   switch (desc.type) {
     case "boolean":
       return (
-        <div className="mt-1 flex h-8 items-center">
-          <input
-            type="checkbox"
-            id={`default-${name}`}
-            className="h-4 w-4 rounded border-input"
-            checked={desc.default === true}
-            onChange={(e) => onUpdateParam(name, "default", e.target.checked ? true : null)}
-          />
-        </div>
+        <Select
+          aria-label={`Default value for ${name}`}
+          className="mt-1 h-8 px-2 py-1.5"
+          value={
+            desc.default_is_null
+              ? "null"
+              : desc.default === true
+                ? "true"
+                : desc.default === false
+                  ? "false"
+                  : "none"
+          }
+          onChange={(e) => {
+            if (e.target.value === "null") {
+              onUpdateParam(name, "default_is_null", true);
+            } else if (e.target.value === "none") {
+              onUpdateParam(name, "default", null);
+              onUpdateParam(name, "default_is_null", false);
+            } else {
+              onUpdateParam(name, "default", e.target.value === "true");
+            }
+          }}
+        >
+          <option value="none">No default</option>
+          {!desc.required && <option value="null">Null</option>}
+          <option value="true">True</option>
+          <option value="false">False</option>
+        </Select>
       );
     case "integer":
       return (
-        <Input
-          className="mt-1 h-8 text-sm"
-          type="number"
-          value={desc.default != null ? String(desc.default) : ""}
-          onChange={(e) => {
-            const parsed = parseInt(e.target.value, 10);
-            onUpdateParam(name, "default", e.target.value && !isNaN(parsed) ? parsed : null);
-          }}
-          placeholder="(none)"
-        />
+        <ScalarDefaultControl desc={desc} name={name} onUpdateParam={onUpdateParam}>
+          <Input
+            className="h-8 text-sm"
+            type="number"
+            value={desc.default != null ? String(desc.default) : ""}
+            onChange={(e) => {
+              const parsed = parseInt(e.target.value, 10);
+              onUpdateParam(name, "default", e.target.value && !isNaN(parsed) ? parsed : null);
+            }}
+            placeholder="(none)"
+          />
+        </ScalarDefaultControl>
       );
     case "float":
       return (
-        <Input
-          className="mt-1 h-8 text-sm"
-          type="number"
-          step="any"
-          value={desc.default != null ? String(desc.default) : ""}
-          onChange={(e) => {
-            const parsed = parseFloat(e.target.value);
-            onUpdateParam(name, "default", e.target.value && !isNaN(parsed) ? parsed : null);
-          }}
-          placeholder="(none)"
-        />
+        <ScalarDefaultControl desc={desc} name={name} onUpdateParam={onUpdateParam}>
+          <Input
+            className="h-8 text-sm"
+            type="number"
+            step="any"
+            value={desc.default != null ? String(desc.default) : ""}
+            onChange={(e) => {
+              const parsed = parseFloat(e.target.value);
+              onUpdateParam(name, "default", e.target.value && !isNaN(parsed) ? parsed : null);
+            }}
+            placeholder="(none)"
+          />
+        </ScalarDefaultControl>
       );
     case "date":
       return (
-        <Input
-          className="mt-1 h-8 text-sm"
-          type="date"
-          value={desc.default != null ? String(desc.default) : ""}
-          onChange={(e) => onUpdateParam(name, "default", e.target.value || null)}
-          placeholder="(none)"
-        />
+        <div className="mt-1 space-y-1.5">
+          <Select
+            aria-label={`Default mode for ${name}`}
+            className="h-8 px-2 py-1.5"
+            value={desc.default_is_null ? "null" : (desc.default_expression ?? "fixed")}
+            onChange={(e) => {
+              const mode = e.target.value;
+              if (mode === "null") {
+                onUpdateParam(name, "default_is_null", true);
+              } else if (mode === "today" || mode === "yesterday") {
+                onUpdateParam(name, "default_expression", mode);
+              } else if (desc.default_is_null) {
+                onUpdateParam(name, "default_is_null", false);
+              } else {
+                onUpdateParam(name, "default_expression", null);
+              }
+            }}
+          >
+            <option value="fixed">Fixed date</option>
+            {!desc.required && <option value="null">Null</option>}
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+          </Select>
+          {desc.default_is_null ? (
+            <p className="text-xs text-muted-foreground">Passes SQL NULL when omitted.</p>
+          ) : desc.default_expression == null ? (
+            <Input
+              aria-label={`Fixed default date for ${name}`}
+              className="h-8 text-sm"
+              type="date"
+              value={desc.default != null ? String(desc.default) : ""}
+              onChange={(e) => onUpdateParam(name, "default", e.target.value || null)}
+            />
+          ) : null}
+        </div>
       );
     default:
       return (
-        <Input
-          className="mt-1 h-8 text-sm"
-          value={String(desc.default ?? "")}
-          onChange={(e) => onUpdateParam(name, "default", e.target.value || null)}
-          placeholder="(none)"
-        />
+        <ScalarDefaultControl desc={desc} name={name} onUpdateParam={onUpdateParam}>
+          <Input
+            className="h-8 text-sm"
+            value={String(desc.default ?? "")}
+            onChange={(e) => onUpdateParam(name, "default", e.target.value || null)}
+            placeholder="(none)"
+          />
+        </ScalarDefaultControl>
       );
   }
 }
@@ -88,6 +170,12 @@ export function ParamsStep({ state, onUpdateParam }: ParamsStepProps) {
       <p className="text-sm text-muted-foreground">
         Define types and defaults for bind parameters detected in your query.
       </p>
+      {state.data_strategy === "snapshot" && entries.length > 0 && (
+        <p className="text-sm text-amber-700">
+          Snapshot endpoints require a fixed, NULL, or dynamic default for every parameter. Dynamic
+          dates are evaluated from the application server date whenever the snapshot runs.
+        </p>
+      )}
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No bind parameters detected. You can proceed or go back to modify your query.

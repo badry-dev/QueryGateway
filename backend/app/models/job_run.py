@@ -30,17 +30,15 @@ class JobRun(UUIDPrimaryKeyMixin, Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
 
-    schedule_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("schedules.id", ondelete="RESTRICT"), nullable=False
+    schedule_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("schedules.id", ondelete="SET NULL"), nullable=True
     )
-    endpoint_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("endpoints.id", ondelete="RESTRICT"), nullable=False
+    endpoint_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("endpoints.id", ondelete="SET NULL"), nullable=True
     )
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[JobRunStatus] = mapped_column(
         SAEnum(JobRunStatus, name="job_run_status"),
         nullable=False,

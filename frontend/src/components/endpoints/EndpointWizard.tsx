@@ -23,6 +23,11 @@ import { ReviewStep } from "./wizard/ReviewStep";
 import { SqlStep } from "./wizard/SqlStep";
 import { extractBindParams, reconcileParamSchema } from "./wizard/bindParams";
 import {
+  missingSnapshotDefaults,
+  resolvePreviewParameterDefault,
+  updateParameterDescriptor,
+} from "./wizard/parameterDefaults";
+import {
   INITIAL_WIZARD_STATE,
   WIZARD_STEPS,
   type WizardState,
@@ -57,10 +62,17 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
         connection_id: state.connection_id,
         sql_text: state.sql_text,
         params: Object.fromEntries(
-          Object.entries(state.param_schema).map(([name, descriptor]) => [
-            name,
-            previewParams[name] ?? descriptor.default ?? "",
-          ]),
+          Object.entries(state.param_schema).map(([name, descriptor]) => {
+            const previewValue = previewParams[name];
+            const resolvedDefault = resolvePreviewParameterDefault(descriptor);
+            const value =
+              previewValue !== undefined && previewValue.trim().length > 0
+                ? previewValue
+                : resolvedDefault !== undefined
+                  ? resolvedDefault
+                  : "";
+            return [name, value];
+          }),
         ),
         max_rows: 10,
       }),
@@ -119,24 +131,26 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
   }, []);
 
   const updateParam = useCallback((name: string, field: keyof ParamDescriptor, value: unknown) => {
-    setState((s) => ({
-      ...s,
-      param_schema: {
-        ...s.param_schema,
-        [name]: { ...s.param_schema[name], [field]: value },
-      },
-    }));
+    setState((s) => {
+      const descriptor = updateParameterDescriptor(s.param_schema[name], field, value);
+      return {
+        ...s,
+        param_schema: { ...s.param_schema, [name]: descriptor },
+      };
+    });
   }, []);
 
   const canNext = (): boolean => {
     if (step === 0) return !!state.connection_id;
     if (step === 1) return !!state.sql_text.trim();
     if (step === 3) {
-      // A public endpoint (no auth method) requires an explicit opt-in,
-      // mirroring the server-side 422 so the admin can't reach Review with
-      // an invalid configuration.
+      // An endpoint without a dedicated method requires an explicit opt-in to
+      // platform-admin Bearer authentication, mirroring the server-side 422.
       const authOk = !!state.auth_method_id || state.allow_unauthenticated;
-      return !!state.name.trim() && !!state.path.trim() && authOk;
+      const snapshotDefaultsOk =
+        state.data_strategy !== "snapshot" ||
+        missingSnapshotDefaults(state.param_schema).length === 0;
+      return !!state.name.trim() && !!state.path.trim() && authOk && snapshotDefaultsOk;
     }
     return true;
   };

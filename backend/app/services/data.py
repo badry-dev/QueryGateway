@@ -26,9 +26,11 @@ from typing import Any
 import structlog
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.admin import get_current_admin
 from app.middleware import resolve_request_id
 from app.models.endpoint import ApiEndpoint
 from app.repositories.auth_method import AuthMethodRepository
@@ -111,54 +113,65 @@ class DataService:
         if endpoint.auth_method_id is not None:
             principal = await self._enforce_auth(request, endpoint.auth_method_id)
         elif not endpoint.allow_unauthenticated:
-            # No auth method AND no explicit opt-in. EndpointCreate/Update both
-            # reject this combination, but it can still arise out-of-band — most
-            # importantly when an auth method an endpoint references is deleted
-            # (the FK is ondelete=SET NULL), which would otherwise silently turn
-            # a previously protected endpoint public. Default-deny rather than
-            # serve it unauthenticated (closes the M1 deletion side-channel).
-            log.warning(
-                "unauthenticated_endpoint_denied",
-                endpoint_id=str(endpoint.id),
-                endpoint=path,
-                user="anonymous",
-                status=status.HTTP_401_UNAUTHORIZED,
-                method=request.method,
-                client_ip=request.client.host if request.client else None,
-                request_id=resolve_request_id(request),
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
-            )
+            self._log_platform_auth_denied(request, endpoint, started_at, path)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication configuration is unavailable.",
             )
+        else:
+            principal = await self._enforce_platform_auth(request, endpoint, started_at, path)
 
         if endpoint.data_strategy.value == "snapshot":
             response = await self._serve_snapshot(endpoint, path, principal)
         else:
             response = await self._serve_live(endpoint, request, path, principal)
 
-        if endpoint.auth_method_id is None:
-            # Reached only for an explicitly public endpoint (the default-deny
-            # branch above already returned). Audit every public hit with the
-            # full structured-log field set (§3.5); ``allow_unauthenticated`` is
-            # always True here.
-            log.warning(
-                "public_endpoint_served",
-                endpoint_id=str(endpoint.id),
-                endpoint=path,
-                user=principal or "anonymous",
-                status=response.status_code,
-                method=request.method,
-                client_ip=request.client.host if request.client else None,
-                request_id=resolve_request_id(request),
-                duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
-            )
-
         return DataServiceResult(
             response=response,
             principal=principal,
             endpoint_id=endpoint.id,
+        )
+
+    async def _enforce_platform_auth(
+        self,
+        request: Request,
+        endpoint: ApiEndpoint,
+        started_at: float,
+        path: str,
+    ) -> str:
+        """Require the platform admin bearer token when no endpoint auth is set."""
+        authorization = request.headers.get("Authorization", "")
+        credentials = None
+        if authorization.lower().startswith("bearer "):
+            credentials = HTTPAuthorizationCredentials(
+                scheme="Bearer",
+                credentials=authorization[7:].strip(),
+            )
+
+        try:
+            principal = await get_current_admin(credentials)
+        except HTTPException:
+            self._log_platform_auth_denied(request, endpoint, started_at, path)
+            raise
+        return principal.username
+
+    @staticmethod
+    def _log_platform_auth_denied(
+        request: Request,
+        endpoint: ApiEndpoint,
+        started_at: float,
+        path: str,
+    ) -> None:
+        log.warning(
+            "unauthenticated_endpoint_denied",
+            endpoint_id=str(endpoint.id),
+            endpoint=path,
+            user="anonymous",
+            status=status.HTTP_401_UNAUTHORIZED,
+            method=request.method,
+            client_ip=request.client.host if request.client else None,
+            request_id=resolve_request_id(request),
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
         )
 
     # ── Endpoint lookup ─────────────────────────────────────────────────────
@@ -367,7 +380,11 @@ class DataService:
     @staticmethod
     def _coerce_params(endpoint: ApiEndpoint, request: Request) -> dict[str, Any]:
         param_schema = endpoint.param_schema_json or {}
-        Model = build_param_model(param_schema)
+        # Scheduler defaults make snapshot refreshes autonomous, but they do
+        # not make required HTTP query parameters optional. Live callers must
+        # supply every descriptor marked required; configured defaults remain
+        # available to the scheduler and to omitted optional request fields.
+        Model = build_param_model(param_schema, enforce_required=True)
         # Pull only declared params from the query string; ignore unknowns
         # so the legacy loop's behavior is preserved. Filter on
         # ``isinstance(descriptor, dict)`` so a corrupted non-dict

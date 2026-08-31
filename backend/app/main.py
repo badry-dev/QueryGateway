@@ -101,7 +101,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         debug=settings.debug,
     )
     _init_oracle_client()
-    start_scheduler()
+    await start_scheduler()
     yield
     stop_scheduler()
     log.info("application_shutdown")

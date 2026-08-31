@@ -4,6 +4,7 @@ import { Copy, ExternalLink, Pencil, Plus, RefreshCw, Trash2 } from "lucide-reac
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ export function EndpointsPage() {
   const [deleteEndpoint, setDeleteEndpoint] = useState<Endpoint | null>(null);
   const [editForm, setEditForm] = useState<EndpointUpdate>({});
   const [editError, setEditError] = useState("");
+  const [deleteError, setDeleteError] = useState("");
 
   const {
     data: endpoints = [],
@@ -43,7 +45,9 @@ export function EndpointsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.endpoints.all });
       setDeleteEndpoint(null);
+      setDeleteError("");
     },
+    onError: (err) => setDeleteError(getApiError(err)),
   });
 
   const updateMutation = useMutation({
@@ -189,7 +193,15 @@ export function EndpointsPage() {
                       <Button variant="ghost" size="sm" onClick={() => openEdit(ep)}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setDeleteEndpoint(ep)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Delete endpoint"
+                        onClick={() => {
+                          setDeleteEndpoint(ep);
+                          setDeleteError("");
+                        }}
+                      >
                         <Trash2 className="h-3.5 w-3.5 text-destructive" />
                       </Button>
                     </div>
@@ -281,30 +293,27 @@ export function EndpointsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Dialog */}
-      <Dialog open={!!deleteEndpoint} onOpenChange={() => setDeleteEndpoint(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete Endpoint</DialogTitle>
-            <DialogDescription>
-              This will permanently delete <strong>{deleteEndpoint?.name}</strong>. The URL{" "}
-              <code>/api/v1/data/{deleteEndpoint?.path}</code> will stop serving data.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteEndpoint(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => deleteEndpoint && deleteMutation.mutate(deleteEndpoint.id)}
-              disabled={deleteMutation.isPending}
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DeleteConfirmDialog
+        open={!!deleteEndpoint}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteEndpoint(null);
+            setDeleteError("");
+          }
+        }}
+        title="Delete Endpoint"
+        description={
+          <>
+            This will permanently delete <strong>{deleteEndpoint?.name}</strong>. The URL{" "}
+            <code>/api/v1/data/{deleteEndpoint?.path}</code> will stop serving data. Its schedule
+            and cached snapshots will also be removed; historical job-run audit records are
+            retained.
+          </>
+        }
+        isDeleting={deleteMutation.isPending}
+        onConfirm={() => deleteEndpoint && deleteMutation.mutate(deleteEndpoint.id)}
+        error={deleteError}
+      />
     </div>
   );
 }

@@ -51,12 +51,9 @@ class ApiEndpoint(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     auth_method_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("auth_methods.id", ondelete="SET NULL"), nullable=True
     )
-    # When no auth method is attached, an endpoint is served unauthenticated
-    # (public). This flag forces that to be an explicit, deliberate choice:
-    # the admin API rejects an endpoint that has no auth method unless this
-    # is set to True (see app.schemas.endpoint). Existing rows default to
-    # False so they keep being served (the data plane logs a warning) but
-    # any future edit must opt in explicitly.
+    # Legacy-named compatibility flag. When no endpoint-specific auth method is
+    # attached, True opts into platform-admin Bearer authentication. The data
+    # plane never serves anonymous requests.
     allow_unauthenticated: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=text("false")
     )

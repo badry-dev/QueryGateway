@@ -132,6 +132,22 @@ class TestMigrationFileStructure:
             assert "drop_column" in src, f"{f.name} must drop the column (downgrade)"
             assert "endpoints" in src, f"{f.name} must target the endpoints table"
 
+    def test_schedule_delete_preserves_job_runs_migration(self) -> None:
+        migration = MIGRATION_DIR / "b2d18f4a6c73_preserve_job_runs_when_deleting_schedules.py"
+        source = migration.read_text()
+        assert migration.is_file()
+        assert 'ondelete="SET NULL"' in source
+        assert '"schedule_id"' in source
+        assert "nullable=True" in source
+
+    def test_endpoint_delete_preserves_job_runs_migration(self) -> None:
+        migration = MIGRATION_DIR / "c7e91a4f2d60_preserve_job_runs_when_deleting_endpoints.py"
+        source = migration.read_text()
+        assert migration.is_file()
+        assert 'ondelete="SET NULL"' in source
+        assert '"endpoint_id"' in source
+        assert "nullable=True" in source
+
     def test_migration_chain_is_linear(self) -> None:
         """The revision graph must be a single linear chain: exactly one base
         (down_revision=None), exactly one head, and every down_revision known."""
@@ -233,9 +249,7 @@ class TestSchemaCreation:
         r = await client.get("/api/v1/admin/health/ready")
         assert r.status_code == 200
 
-    async def test_connection_crud_after_fresh_schema(
-        self, async_client: object
-    ) -> None:
+    async def test_connection_crud_after_fresh_schema(self, async_client: object) -> None:
         """Verify CRUD operations work on fresh schema."""
         from httpx import AsyncClient
 

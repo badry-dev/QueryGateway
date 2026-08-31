@@ -7,6 +7,7 @@ import type { AuthMethod } from "@/types/auth_method";
 import type { DataStrategy } from "@/types/endpoint";
 
 import type { WizardState, WizardUpdate } from "./types";
+import { missingSnapshotDefaults } from "./parameterDefaults";
 
 interface ConfigStepProps {
   state: WizardState;
@@ -15,6 +16,8 @@ interface ConfigStepProps {
 }
 
 export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
+  const missingDefaults = missingSnapshotDefaults(state.param_schema);
+
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Endpoint Configuration</h3>
@@ -65,13 +68,12 @@ export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
             onChange={(e) =>
               update({
                 auth_method_id: e.target.value,
-                // Selecting an auth method clears the public opt-in so a
-                // stale "public" flag can't linger on a protected endpoint.
+                // Selecting an endpoint method clears the platform fallback.
                 allow_unauthenticated: e.target.value ? false : state.allow_unauthenticated,
               })
             }
           >
-            <option value="">None (public)</option>
+            <option value="">Platform admin Bearer</option>
             {authMethods.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name} ({a.method_type})
@@ -92,14 +94,24 @@ export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
         </div>
       </div>
 
-      {!state.auth_method_id && (
+      {state.data_strategy === "snapshot" && missingDefaults.length > 0 && (
         <Alert variant="destructive">
-          <AlertTitle>⚠ This endpoint is PUBLIC</AlertTitle>
+          <AlertTitle>Snapshot defaults required</AlertTitle>
+          <AlertDescription>
+            Add a fixed, dynamic, or NULL default for{" "}
+            {missingDefaults.map((name) => `:${name}`).join(", ")} in the Parameters step. Scheduled
+            snapshots have no request values to bind.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {!state.auth_method_id && (
+        <Alert>
+          <AlertTitle>Platform authentication required</AlertTitle>
           <AlertDescription>
             <p className="mb-2">
-              With no authentication method attached, anyone who knows the URL can read this
-              endpoint&apos;s data without credentials. Attach an auth method above unless this data
-              is meant to be public.
+              With no endpoint-specific method attached, every request must use a valid platform
+              admin Bearer token. Anonymous data access is never allowed.
             </p>
             <label className="flex items-center gap-2 font-medium">
               <input
@@ -107,7 +119,7 @@ export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
                 checked={state.allow_unauthenticated}
                 onChange={(e) => update({ allow_unauthenticated: e.target.checked })}
               />
-              Yes, serve this endpoint publicly without authentication.
+              Use platform admin Bearer authentication for this endpoint.
             </label>
           </AlertDescription>
         </Alert>

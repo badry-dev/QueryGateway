@@ -19,7 +19,7 @@ export interface WizardState {
   param_schema: Record<string, ParamDescriptor>;
   column_map: Record<string, string>;
   auth_method_id: string;
-  /** Explicit opt-in to a public endpoint when no auth method is selected. */
+  /** Legacy API flag used to opt into platform-admin Bearer fallback. */
   allow_unauthenticated: boolean;
   data_strategy: DataStrategy;
 }

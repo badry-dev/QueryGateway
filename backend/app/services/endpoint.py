@@ -24,9 +24,11 @@ from app.schemas.endpoint import (
     EndpointUpdate,
     ParamDescriptor,
     PublicEndpointError,
+    SnapshotConfigurationError,
     SqlPreviewRequest,
     SqlPreviewResponse,
     extract_bind_params,
+    require_snapshot_defaults,
 )
 from app.sql.executor import SqlExecutionError, execute_query
 
@@ -163,23 +165,30 @@ class EndpointService:
             for field in payload.model_fields_set & _updatable
         }
 
-        # M1: never persist an endpoint that ends up unauthenticated without an
-        # explicit opt-in. Evaluate the MERGED state (payload over the stored
-        # row) on EVERY update — not just when an auth field is in the payload —
-        # so a legacy/orphaned (auth_method_id=None, allow_unauthenticated=False)
-        # row can't stay silently public via an unrelated edit (rename, SQL, …).
+        # Always preserve an authentication path in the merged state: either a
+        # dedicated endpoint method or the platform-admin Bearer fallback.
         effective_auth = (
             payload.auth_method_id
             if "auth_method_id" in payload.model_fields_set
             else obj.auth_method_id
         )
-        effective_public = (
+        effective_fallback = (
             payload.allow_unauthenticated
             if "allow_unauthenticated" in payload.model_fields_set
             else obj.allow_unauthenticated
         )
-        if effective_auth is None and not effective_public:
+        if effective_auth is None and not effective_fallback:
             raise PublicEndpointError(PUBLIC_OPT_IN_MESSAGE)
+
+        if "data_strategy" in payload.model_fields_set and payload.data_strategy is None:
+            raise SnapshotConfigurationError("data_strategy cannot be null.")
+        effective_strategy = payload.data_strategy or obj.data_strategy
+        effective_param_schema: dict[str, ParamDescriptor] | dict[str, object]
+        if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
+            effective_param_schema = payload.param_schema
+        else:
+            effective_param_schema = obj.param_schema_json or {}
+        require_snapshot_defaults(effective_strategy, effective_param_schema)
 
         # Uniqueness check on name change
         if payload.name is not None and payload.name != obj.name:

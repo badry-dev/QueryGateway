@@ -9,10 +9,12 @@ This replaces the hand-rolled ``_coerce_param`` loop that lived in
 
 The descriptor format mirrors ``app.schemas.endpoint.ParamDescriptor`` —
 ``{"type": "string|integer|float|boolean|date", "required": bool,
-"default": <value>, "max_length": int | None}``.
+"default": <value>, "default_is_null": bool,
+"default_expression": "today|yesterday",
+"max_length": int | None}``.
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Annotated, Any, Literal, get_args
 
 import structlog
@@ -49,7 +51,38 @@ def _coerce_bool(value: object) -> object:
     return value
 
 
-def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
+def _coerce_date(value: object) -> object:
+    """Accept the documented HTTP date formats and return a date value."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        for date_format in ("%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(value, date_format).date()
+            except ValueError:
+                continue
+        raise ValueError("expected YYYY-MM-DD or DD-MM-YYYY")
+    return value
+
+
+def resolve_default_expression(expression: str, *, current_date: date | None = None) -> date:
+    """Resolve a supported dynamic date default using the server's local date."""
+    resolved_date = current_date or date.today()
+    if expression == "today":
+        return resolved_date
+    if expression == "yesterday":
+        return resolved_date - timedelta(days=1)
+    raise ValueError(f"Unsupported default expression: {expression}")
+
+
+def _build_field(
+    descriptor: dict[str, Any],
+    *,
+    current_date: date | None = None,
+    enforce_required: bool = False,
+) -> tuple[type, Any]:
     """Map one descriptor to a ``(annotation, default)`` pair for ``create_model``."""
     raw_type = descriptor.get("type", "string")
     if raw_type not in _VALID_PARAM_TYPES:
@@ -59,6 +92,14 @@ def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
 
     required = bool(descriptor.get("required", True))
     default = descriptor.get("default")
+    default_is_null = bool(descriptor.get("default_is_null", False))
+    default_expression = descriptor.get("default_expression")
+    if default_expression is not None:
+        if raw_type != "date":
+            raise ValueError("Dynamic defaults are supported only for date parameters.")
+        if default is not None:
+            raise ValueError("Declare either default or default_expression, not both.")
+        default = resolve_default_expression(str(default_expression), current_date=current_date)
     max_length = descriptor.get("max_length")
 
     annotation: type
@@ -69,20 +110,22 @@ def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
     elif raw_type == "boolean":
         annotation = Annotated[bool, BeforeValidator(_coerce_bool)]  # type: ignore[assignment]
     elif raw_type == "date":
-        annotation = date
+        annotation = Annotated[date, BeforeValidator(_coerce_date)]  # type: ignore[assignment]
     else:  # "string"
         annotation = str
         if isinstance(max_length, int) and max_length >= 1:
             annotation = Annotated[str, Field(max_length=max_length)]  # type: ignore[assignment]
 
-    # Legacy ``_coerce_param`` semantics: if a default is configured,
-    # apply it whenever the query param is missing — regardless of the
-    # ``required`` flag. The previous Pydantic-based draft made every
-    # required field unconditionally mandatory, which would 422 endpoints
-    # whose stored schema combined ``required=true`` with a non-null
-    # ``default``. ``ParamDescriptor`` still allows that combination, so
-    # honor it here.
-    if default is not None:
+    # Scheduled execution must resolve every configured default without
+    # request input. Live requests use ``enforce_required=True`` so a
+    # scheduler default never weakens their public required-parameter
+    # contract. Optional request fields continue to use their defaults.
+    if enforce_required and required:
+        field_default = ...
+    elif default_is_null:
+        annotation = annotation | None  # type: ignore[assignment]
+        field_default = None
+    elif default is not None:
         field_default = default
     elif required:
         field_default = ...
@@ -100,7 +143,12 @@ def _build_field(descriptor: dict[str, Any]) -> tuple[type, Any]:
     return annotation, field_default
 
 
-def build_param_model(param_schema: dict[str, Any]) -> type[BaseModel]:
+def build_param_model(
+    param_schema: dict[str, Any],
+    *,
+    current_date: date | None = None,
+    enforce_required: bool = False,
+) -> type[BaseModel]:
     """Construct a Pydantic model that validates ``param_schema`` payloads.
 
     Non-dict values in ``param_schema`` are ignored to match the legacy
@@ -121,9 +169,13 @@ def build_param_model(param_schema: dict[str, Any]) -> type[BaseModel]:
                 descriptor_type=type(descriptor).__name__,
             )
             continue
-        fields[name] = _build_field(descriptor)
+        fields[name] = _build_field(
+            descriptor,
+            current_date=current_date,
+            enforce_required=enforce_required,
+        )
 
-    model = create_model(
+    model: type[BaseModel] = create_model(
         "EndpointParams",
         # ``validate_default=True`` makes Pydantic coerce/validate the
         # ``default`` we feed each field. Without it, a corrupted stored

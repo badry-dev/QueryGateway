@@ -1,0 +1,143 @@
+"""Unit coverage for restoring in-memory scheduler jobs after restart."""
+
+import uuid
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from structlog.testing import capture_logs
+
+
+def test_scheduled_params_retain_explicit_null_bind() -> None:
+    from app.services.scheduler import resolve_scheduled_params
+
+    params = resolve_scheduled_params(
+        {
+            "str_id": {
+                "type": "string",
+                "required": False,
+                "default_is_null": True,
+            }
+        }
+    )
+
+    assert params == {"str_id": None}
+
+
+@pytest.mark.asyncio
+async def test_restore_active_schedules_registers_each_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import scheduler as scheduler_service
+
+    schedules = [
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            endpoint_id=uuid.uuid4(),
+            schedule_type="cron",
+            cron_expression="0 6 * * *",
+            interval_seconds=None,
+        ),
+        SimpleNamespace(
+            id=uuid.uuid4(),
+            endpoint_id=uuid.uuid4(),
+            schedule_type="interval",
+            cron_expression=None,
+            interval_seconds=300,
+        ),
+    ]
+
+    class FakeSessionContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class FakeScheduleRepository:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        async def get_all(self, *, active_only: bool = False) -> list[object]:
+            assert active_only is True
+            return cast(list[object], schedules)
+
+    add_job = MagicMock()
+    monkeypatch.setattr(scheduler_service, "AsyncSessionLocal", FakeSessionContext)
+    monkeypatch.setattr(scheduler_service, "ScheduleRepository", FakeScheduleRepository)
+    monkeypatch.setattr(scheduler_service, "add_schedule_job", add_job)
+
+    restored = await scheduler_service.restore_active_schedules()
+
+    assert restored == 2
+    assert add_job.call_count == 2
+    assert add_job.call_args_list[0].kwargs["schedule_id"] == schedules[0].id
+
+
+@pytest.mark.asyncio
+async def test_restore_active_schedules_fails_when_a_job_is_not_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import scheduler as scheduler_service
+
+    schedule = SimpleNamespace(
+        id=uuid.uuid4(),
+        endpoint_id=uuid.uuid4(),
+        schedule_type="cron",
+        cron_expression=None,
+        interval_seconds=None,
+    )
+
+    class FakeSessionContext:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    class FakeScheduleRepository:
+        def __init__(self, db: object) -> None:
+            self.db = db
+
+        async def get_all(self, *, active_only: bool = False) -> list[object]:
+            assert active_only is True
+            return [schedule]
+
+    monkeypatch.setattr(scheduler_service, "AsyncSessionLocal", FakeSessionContext)
+    monkeypatch.setattr(scheduler_service, "ScheduleRepository", FakeScheduleRepository)
+
+    with pytest.raises(RuntimeError, match=str(schedule.id)):
+        await scheduler_service.restore_active_schedules()
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_cleans_up_and_propagates_restore_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import scheduler as scheduler_service
+    from apscheduler.schedulers import asyncio as apscheduler_asyncio
+
+    scheduler = MagicMock()
+    monkeypatch.setattr(apscheduler_asyncio, "AsyncIOScheduler", MagicMock(return_value=scheduler))
+    monkeypatch.setattr(
+        scheduler_service,
+        "restore_active_schedules",
+        AsyncMock(side_effect=RuntimeError("database unavailable")),
+    )
+    monkeypatch.setattr(scheduler_service, "_scheduler", None)
+
+    with capture_logs() as logs:
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await scheduler_service.start_scheduler()
+
+    scheduler.shutdown.assert_called_once_with(wait=False)
+    assert scheduler_service._scheduler is None
+    failure = next(log for log in logs if log["event"] == "scheduler_start_failed")
+    assert failure["request_id"] is None
+    assert failure["user"] == "scheduler"
+    assert failure["endpoint"] is None
+    assert failure["status"] is None
+    assert failure["duration_ms"] is None
+    assert failure["method"] == "SCHEDULE"
+    assert failure["client_ip"] is None

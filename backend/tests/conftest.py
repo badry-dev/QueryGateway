@@ -49,6 +49,7 @@ from app.dependencies import get_db
 from app.main import app
 from app.models.base import Base
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -59,6 +60,16 @@ from sqlalchemy.ext.asyncio import (
 # Plaintext counterpart to ADMIN_PASSWORD_HASH above. Tests import this
 # rather than hard-coding the password in each file.
 ADMIN_TEST_PASSWORD = "admin-password-do-not-use-in-prod"
+
+
+def _assert_safe_test_database(database_url: str, app_env: str) -> None:
+    """Require both an explicit test environment and a test-named database."""
+    database_name = make_url(database_url).database or ""
+    if app_env != "test" or "test" not in database_name.lower():
+        raise RuntimeError(
+            "Refusing to run destructive test schema setup: APP_ENV must be "
+            "'test' and the parsed database name must contain 'test'."
+        )
 
 
 def _mint_admin_token() -> str:
@@ -98,16 +109,9 @@ async def engine() -> AsyncGenerator[AsyncEngine]:
     so the database is left empty between tests.
     """
     database_url = settings.database_url
-    # Hard safety guard: never run destructive schema ops against a DB that
-    # isn't clearly marked as a test database. Without this, a developer
-    # invoking pytest with the default DATABASE_URL would have their app
-    # database wiped on every test run.
-    if settings.app_env != "test" and "test" not in database_url.lower():
-        raise RuntimeError(
-            "Refusing to run drop_all/create_all: APP_ENV is not 'test' and "
-            "DATABASE_URL does not contain 'test'. Set APP_ENV=test or point "
-            "DATABASE_URL at a test database."
-        )
+    # Hard safety guard: both signals are mandatory. Requiring only one means
+    # APP_ENV=test can accidentally target and wipe the development database.
+    _assert_safe_test_database(database_url, settings.app_env)
 
     test_engine = create_async_engine(database_url, echo=False)
     async with test_engine.begin() as conn:

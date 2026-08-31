@@ -9,10 +9,11 @@ Public contract rules:
 
 import re
 import uuid
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.models.endpoint import DataStrategy
 
@@ -33,18 +34,21 @@ _UNSAFE_PATTERNS = [
 # Valid path segment: lowercase alphanumeric, hyphens, underscores, slashes.
 _PATH_RE = re.compile(r"^[a-z0-9][a-z0-9\-_/]*$")
 
-# Message shown when an endpoint would be served with no auth method and
-# without an explicit opt-in to public access (M1 — silent public endpoints).
+# Message shown when an endpoint has no dedicated auth method and has not opted
+# into the platform-admin Bearer fallback. Anonymous data access is forbidden.
 PUBLIC_OPT_IN_MESSAGE = (
-    "Endpoint has no auth_method_id. Attach an auth method to protect it, or "
-    "set allow_unauthenticated=true to deliberately publish it as a PUBLIC "
-    "(unauthenticated) endpoint."
+    "Endpoint has no auth_method_id. Attach an endpoint auth method, or set "
+    "allow_unauthenticated=true to use platform-admin Bearer authentication. "
+    "Anonymous data access is not supported."
 )
 
 
 class PublicEndpointError(ValueError):
-    """Raised when a write would leave an endpoint unauthenticated without an
-    explicit ``allow_unauthenticated`` opt-in. Routers surface this as 422."""
+    """Raised when an endpoint has no configured authentication path."""
+
+
+class SnapshotConfigurationError(ValueError):
+    """Raised when a snapshot endpoint cannot execute without request inputs."""
 
 
 def extract_bind_params(sql: str) -> list[str]:
@@ -75,6 +79,20 @@ class ParamDescriptor(BaseModel):
     )
     required: bool = True
     default: str | int | float | bool | None = None
+    default_is_null: bool = Field(
+        False,
+        description=(
+            "Use an explicit SQL NULL when this optional parameter is omitted. "
+            "This is distinct from having no configured default."
+        ),
+    )
+    default_expression: Literal["today", "yesterday"] | None = Field(
+        None,
+        description=(
+            "Dynamic date default evaluated from the application server date "
+            "when the query executes."
+        ),
+    )
     description: str | None = None
     max_length: int | None = Field(
         None,
@@ -84,9 +102,75 @@ class ParamDescriptor(BaseModel):
 
     @model_validator(mode="after")
     def optional_must_have_default(self) -> Self:
-        if not self.required and self.default is None:
-            raise ValueError("Optional parameters must declare a default value.")
+        configured_defaults = sum(
+            (
+                self.default is not None,
+                self.default_is_null,
+                self.default_expression is not None,
+            )
+        )
+        if configured_defaults > 1:
+            raise ValueError(
+                "Declare only one of default, default_is_null, or default_expression."
+            )
+        if self.default_is_null and self.required:
+            raise ValueError("A NULL default is supported only for optional parameters.")
+        if self.default_expression is not None and self.type != "date":
+            raise ValueError("default_expression is supported only for date parameters.")
+        if configured_defaults:
+            from app.sql.param_models import build_param_model  # noqa: PLC0415
+
+            try:
+                model = build_param_model({"value": self.model_dump()})
+                model.model_validate({})
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid default for parameter type '{self.type}'."
+                ) from exc
         return self
+
+
+def missing_snapshot_defaults(
+    param_schema: Mapping[str, object],
+) -> list[str]:
+    """Return snapshot bind names that cannot be resolved without a request."""
+    missing: list[str] = []
+    for name, raw_descriptor in param_schema.items():
+        if isinstance(raw_descriptor, ParamDescriptor):
+            descriptor = raw_descriptor
+        elif isinstance(raw_descriptor, dict):
+            descriptor = ParamDescriptor.model_validate(raw_descriptor)
+        else:
+            missing.append(name)
+            continue
+
+        if (
+            descriptor.default is None
+            and not descriptor.default_is_null
+            and descriptor.default_expression is None
+        ):
+            missing.append(name)
+    return sorted(missing)
+
+
+def require_snapshot_defaults(
+    data_strategy: DataStrategy,
+    param_schema: Mapping[str, object],
+) -> None:
+    """Reject snapshot endpoints whose binds require caller-supplied values."""
+    if data_strategy != DataStrategy.snapshot:
+        return
+    try:
+        missing = missing_snapshot_defaults(param_schema)
+    except ValidationError as exc:
+        raise SnapshotConfigurationError(
+            "Snapshot endpoint has an invalid parameter schema."
+        ) from exc
+    if missing:
+        names = ", ".join(f":{name}" for name in missing)
+        raise SnapshotConfigurationError(
+            f"Snapshot endpoints require a default for every parameter. Missing: {names}."
+        )
 
 
 class EndpointCreate(BaseModel):
@@ -116,8 +200,8 @@ class EndpointCreate(BaseModel):
     allow_unauthenticated: bool = Field(
         False,
         description=(
-            "Explicit opt-in to serve this endpoint with NO authentication. "
-            "Required (must be true) when auth_method_id is omitted."
+            "Legacy-named opt-in to platform-admin Bearer authentication when "
+            "auth_method_id is omitted. It never permits anonymous access."
         ),
     )
     data_strategy: DataStrategy = DataStrategy.live
@@ -134,9 +218,9 @@ class EndpointCreate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def require_auth_or_explicit_public(self) -> Self:
-        # M1: never allow an endpoint to be created with no auth method
-        # unless the admin explicitly opts into public access.
+    def require_auth_or_explicit_fallback(self) -> Self:
+        # Without a dedicated method, require explicit use of the platform
+        # Bearer fallback. The legacy field name does not permit anonymity.
         if self.auth_method_id is None and not self.allow_unauthenticated:
             raise ValueError(PUBLIC_OPT_IN_MESSAGE)
         return self
@@ -163,6 +247,7 @@ class EndpointCreate(BaseModel):
             raise ValueError(
                 f"Schema declares params not referenced in SQL: {sorted(unused)}"
             )
+        require_snapshot_defaults(self.data_strategy, self.param_schema)
         return self
 
 
@@ -183,8 +268,8 @@ class EndpointUpdate(BaseModel):
     allow_unauthenticated: bool | None = Field(
         None,
         description=(
-            "Explicit opt-in to serve this endpoint with NO authentication. "
-            "Set true when detaching the auth method to keep it public."
+            "Legacy-named opt-in to platform-admin Bearer authentication when "
+            "detaching the endpoint-specific auth method."
         ),
     )
     data_strategy: DataStrategy | None = None
@@ -233,11 +318,9 @@ class EndpointUpdate(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def require_auth_or_explicit_public(self) -> Self:
-        # M1: when this request explicitly sets BOTH fields, reject the unsafe
-        # combination here (422). The merged-state case — e.g. detaching the
-        # auth method without touching allow_unauthenticated — is enforced
-        # against the stored row in EndpointService.update_endpoint.
+    def require_auth_or_explicit_fallback(self) -> Self:
+        # When this request explicitly sets both fields, reject a configuration
+        # with neither a dedicated method nor the platform Bearer fallback.
         fields_set = self.model_fields_set
         if "auth_method_id" in fields_set and "allow_unauthenticated" in fields_set:
             if self.auth_method_id is None and not self.allow_unauthenticated:

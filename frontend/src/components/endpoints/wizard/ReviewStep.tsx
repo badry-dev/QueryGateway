@@ -2,6 +2,7 @@ import type { AuthMethod } from "@/types/auth_method";
 import type { Connection } from "@/types/connection";
 
 import type { WizardState } from "./types";
+import { describeParameterDefault } from "./parameterDefaults";
 
 interface ReviewStepProps {
   state: WizardState;
@@ -26,17 +27,24 @@ export function ReviewStep({ state, connections, authMethods }: ReviewStepProps)
             {state.auth_method_id ? (
               (authMethods.find((a) => a.id === state.auth_method_id)?.name ?? "—")
             ) : (
-              <span className="font-medium text-destructive">PUBLIC (no authentication)</span>
+              <span className="font-medium">Platform admin Bearer</span>
             )}
           </span>
           <span className="text-muted-foreground">Strategy:</span>
           <span className="capitalize">{state.data_strategy}</span>
           <span className="text-muted-foreground">Parameters:</span>
-          <span>
-            {Object.keys(state.param_schema).length > 0
-              ? Object.keys(state.param_schema).join(", ")
-              : "None"}
-          </span>
+          {Object.keys(state.param_schema).length > 0 ? (
+            <span className="space-y-1">
+              {Object.entries(state.param_schema).map(([name, descriptor]) => (
+                <span key={name} className="block">
+                  <code>:{name}</code> — {descriptor.type}; default:{" "}
+                  {describeParameterDefault(descriptor)}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span>None</span>
+          )}
         </div>
         <div>
           <p className="mb-1 text-sm text-muted-foreground">SQL:</p>

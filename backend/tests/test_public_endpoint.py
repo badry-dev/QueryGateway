@@ -1,16 +1,22 @@
-"""M1 — silent-public-endpoint prevention.
+"""Mandatory authentication for every dynamic data endpoint.
 
-An endpoint with no auth method is served unauthenticated by design, but
-that must now be a *deliberate* choice: the admin API rejects a create or
-update that would leave an endpoint unauthenticated unless
-``allow_unauthenticated`` is explicitly set, and the data plane emits a
-``public_endpoint_served`` warning on every public hit.
+The legacy ``allow_unauthenticated`` field is retained for stored/API contract
+compatibility, but now opts into platform-admin Bearer fallback. It never
+permits anonymous data access.
 """
 
 import uuid
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
+from app.auth.jwt_utils import create_access_token
+from app.config import settings
 from app.schemas.endpoint import EndpointCreate
+from app.services.data import DataService
+from fastapi import HTTPException, Request
+from fastapi.responses import JSONResponse
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
@@ -34,8 +40,8 @@ def test_create_without_auth_or_optin_rejected() -> None:
         )
 
 
-def test_create_explicit_public_allowed() -> None:
-    """No auth method + explicit opt-in is a valid, deliberate public endpoint."""
+def test_create_platform_auth_fallback_allowed() -> None:
+    """No endpoint method plus explicit platform fallback remains valid."""
     ep = EndpointCreate(
         name="t",
         path="p",
@@ -56,6 +62,78 @@ def test_create_with_auth_method_allowed() -> None:
         auth_method_id=uuid.uuid4(),
     )
     assert ep.allow_unauthenticated is False
+
+
+@pytest.mark.asyncio
+async def test_data_service_rejects_anonymous_legacy_public_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = DataService(cast(AsyncSession, object()))
+    endpoint = SimpleNamespace(
+        id=uuid.uuid4(),
+        auth_method_id=None,
+        allow_unauthenticated=True,
+        data_strategy=SimpleNamespace(value="snapshot"),
+    )
+    monkeypatch.setattr(service, "_resolve_endpoint", AsyncMock(return_value=endpoint))
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/data/legacy-public",
+            "headers": [],
+            "query_string": b"",
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "root_path": "",
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.serve("legacy-public", request)
+
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_data_service_accepts_platform_auth_for_legacy_public_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = DataService(cast(AsyncSession, object()))
+    endpoint = SimpleNamespace(
+        id=uuid.uuid4(),
+        auth_method_id=None,
+        allow_unauthenticated=True,
+        data_strategy=SimpleNamespace(value="snapshot"),
+    )
+    monkeypatch.setattr(service, "_resolve_endpoint", AsyncMock(return_value=endpoint))
+    serve_snapshot = AsyncMock(return_value=JSONResponse(status_code=503, content={}))
+    monkeypatch.setattr(service, "_serve_snapshot", serve_snapshot)
+    token, _ = create_access_token(
+        subject=settings.admin_username,
+        secret=settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+        expire_minutes=5,
+    )
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/data/legacy-public",
+            "headers": [(b"authorization", f"Bearer {token}".encode())],
+            "query_string": b"",
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "root_path": "",
+        }
+    )
+
+    result = await service.serve("legacy-public", request)
+
+    assert result.principal == settings.admin_username
+    serve_snapshot.assert_awaited_once()
 
 
 # ── API integration ──────────────────────────────────────────────────────────
@@ -159,11 +237,10 @@ async def test_update_detaching_auth_without_optin_returns_422(
 
 
 @pytest.mark.integration
-async def test_public_endpoint_serves_and_logs_warning(
+async def test_legacy_public_endpoint_requires_platform_authentication(
     async_client: object, unauth_client: AsyncClient
 ) -> None:
-    """An explicitly public endpoint is served with NO credentials and emits a
-    fully-populated public_endpoint_served audit event."""
+    """The legacy public flag never permits anonymous data access."""
     admin: AsyncClient = async_client  # type: ignore[assignment]
     conn_id = await _make_connection(admin)
 
@@ -182,17 +259,25 @@ async def test_public_endpoint_serves_and_logs_warning(
     assert r.status_code == 201
 
     with capture_logs() as logs:
-        # unauth_client carries no Authorization header — proves true public access.
         resp = await unauth_client.get(f"/api/v1/data/{ep_path}")
 
-    # Served (reached the snapshot path → 503 "no snapshot yet"), not auth-blocked.
-    assert resp.status_code == 503
-    warnings = [e for e in logs if e.get("event") == "public_endpoint_served"]
-    assert warnings, f"expected a public_endpoint_served warning, got {logs}"
-    assert warnings[0]["endpoint"] == ep_path
-    assert warnings[0]["status"] == 503
-    assert warnings[0]["user"] == "anonymous"
-    assert warnings[0]["log_level"] == "warning"
+    assert resp.status_code == 401
+    denials = [e for e in logs if e.get("event") == "unauthenticated_endpoint_denied"]
+    assert denials, f"expected unauthenticated_endpoint_denied, got {logs}"
+    assert not any(e.get("event") == "public_endpoint_served" for e in logs)
+
+    # The shared admin client carries a valid platform bearer token. It reaches
+    # the snapshot path and returns 503 only because no snapshot exists yet.
+    authenticated = await admin.get(f"/api/v1/data/{ep_path}")
+    assert authenticated.status_code == 503
+
+    authorization = admin.headers["Authorization"]
+    token = authorization.removeprefix("Bearer ")
+    whitespace_authenticated = await unauth_client.get(
+        f"/api/v1/data/{ep_path}",
+        headers={"Authorization": f"Bearer   {token}  "},
+    )
+    assert whitespace_authenticated.status_code == 503
 
 
 @pytest.mark.integration
@@ -249,3 +334,9 @@ async def test_deleting_auth_method_default_denies_endpoint(
     assert "client_ip" in denials[0]
     assert "duration_ms" in denials[0]
     assert not any(e.get("event") == "public_endpoint_served" for e in logs)
+
+    # A valid platform-admin token must not bypass an orphaned endpoint's
+    # explicit fallback setting. The administrator must repair the endpoint
+    # configuration before data access resumes.
+    authenticated = await admin.get(f"/api/v1/data/{ep_path}")
+    assert authenticated.status_code == 401
