@@ -43,7 +43,7 @@
 
 All user-defined SQL is executed via SQLAlchemy `text()` with named bind parameters (`:param_name`). String interpolation of user input is prohibited at all layers. Bind values are validated through typed Pydantic schemas before reaching the query executor.
 
-Live data requests enforce every parameter marked `required`, even when that parameter also has a scheduler default. Defaults exist so scheduled execution can run without request input and so optional live parameters can be omitted. Date query parameters accept `YYYY-MM-DD` and `DD-MM-YYYY`; both formats are normalized to Python `date` values before database binding.
+Live data requests enforce every parameter marked `required`. Endpoint defaults apply only to live request/preview behavior; they are not scheduler configuration. Date query parameters accept `YYYY-MM-DD` and `DD-MM-YYYY`; both formats are normalized to Python `date` values before database binding.
 
 ### Authentication
 
@@ -53,13 +53,13 @@ Live data requests enforce every parameter marked `required`, even when that par
 
 ### Scheduler
 
-APScheduler 3.x runs in-process with an in-memory job store. Schedule definitions are persisted in PostgreSQL, and every active schedule is registered when it is created, updated, resumed, or restored during API startup. Execution telemetry (start time, duration, row count, status, errors) is written to the app DB and exposed through admin APIs. Deleting a schedule sets the historical job run's `schedule_id` to `NULL`, preserving both audit history and snapshots. Deleting an endpoint removes its schedule and cached snapshots, unregisters its in-memory job after the database commit, and sets the historical job run's `endpoint_id` (and cascaded `schedule_id`) to `NULL` so the audit record remains available.
+APScheduler 3.x runs in-process with an in-memory job store. Schedule definitions are persisted in PostgreSQL, and every active schedule is registered when it is created, updated, resumed, or restored during API startup. Each schedule owns its timezone, parameter bindings, and optional date-window preset. The database `next_run_at` is captured as the nominal `scheduled_for` time, so delayed execution still resolves the same logical date; manual runs can provide an explicit logical date. A unique `(schedule_id, scheduled_for)` constraint makes a logical run idempotent. Execution telemetry includes start/finish times, logical date, window boundaries, resolved parameters, trigger source, binding hash, row count, status, and errors. Deleting a schedule sets the historical job run's `schedule_id` to `NULL`, preserving both audit history and snapshots. Deleting an endpoint removes its schedule and cached snapshots, unregisters its in-memory job after the database commit, and sets the historical job run's `endpoint_id` (and cascaded `schedule_id`) to `NULL` so the audit record remains available.
 
 The scheduler is intentionally single-process. Run one API process/replica unless distributed scheduler coordination is added; otherwise each process would register and execute the same persisted schedules.
 
 ### Snapshot Cache
 
-Scheduled endpoints can serve results from a PostgreSQL JSONB snapshot rather than executing live queries. Every bind parameter on a snapshot endpoint must define a fixed default, an explicit SQL `NULL` default for an optional bind, or a dynamic date expression (`today` or `yesterday`) so refreshes never depend on request inputs. Dynamic defaults are resolved from the application server date at execution time, while explicit null defaults remain present in the bind dictionary with a `None` value so the database receives SQL `NULL`. Freshness metadata is returned in responses. Stale snapshot fallback behavior is configurable per endpoint.
+Scheduled endpoints can serve results from a PostgreSQL JSONB snapshot rather than executing live queries. Schedule creation requires exact coverage of the endpoint's SQL binds. The declarative binding sources are fixed literal, explicit SQL `NULL` for an optional bind, logical run date, relative logical date, and inclusive window start/end. Supported windows are previous day, last N complete days, week to date, previous week, month to date, and previous month. Arbitrary Python, JavaScript, and SQL expressions are intentionally unsupported. See [Scheduler parameter bindings](scheduler_parameter_bindings.md) for the API contract and date semantics.
 
 ### Configuration
 

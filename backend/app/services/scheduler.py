@@ -10,11 +10,16 @@ The scheduler uses APScheduler's in-memory job store. Active schedules are
 rehydrated from the application database whenever the process starts.
 """
 
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -25,8 +30,9 @@ from app.repositories.endpoint import EndpointRepository
 from app.repositories.job_run import JobRunRepository
 from app.repositories.schedule import ScheduleRepository
 from app.repositories.snapshot import SnapshotRepository
-from app.sql.executor import SqlExecutionError, execute_query
-from app.sql.param_models import build_param_model
+from app.schemas.schedule import ScheduleWindow
+from app.services.schedule_bindings import resolve_schedule_parameters
+from app.sql.executor import execute_query
 
 log = structlog.get_logger().bind(
     request_id=None,
@@ -55,13 +61,39 @@ def get_scheduler() -> Any:
     return _scheduler
 
 
-def resolve_scheduled_params(param_schema: dict[str, Any]) -> dict[str, Any]:
-    """Resolve every scheduled bind default, retaining explicit SQL NULLs."""
-    ParamModel = build_param_model(param_schema)
-    return ParamModel.model_validate({}).model_dump()
+def _binding_hash(
+    *,
+    timezone_name: str,
+    parameter_bindings: dict[str, object],
+    window: dict[str, object] | None,
+) -> str:
+    payload = {
+        "timezone": timezone_name,
+        "parameter_bindings": parameter_bindings,
+        "window": window,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
-async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
+def _get_next_run_at(schedule_id: uuid.UUID) -> datetime | None:
+    if _scheduler is None:
+        return None
+    try:
+        job = _scheduler.get_job(str(schedule_id))
+        next_run_time = getattr(job, "next_run_time", None)
+        return next_run_time if isinstance(next_run_time, datetime) else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def execute_scheduled_job(
+    schedule_id: str,
+    endpoint_id: str,
+    *,
+    scheduled_for: datetime | None = None,
+    trigger_source: str = "scheduled",
+) -> None:
     """Execute a single scheduled job — query Oracle, save snapshot.
 
     This function is called by APScheduler in a thread. We create our own
@@ -86,16 +118,62 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
         ep_repo = EndpointRepository(db)
         conn_repo = ConnectionRepository(db)
 
-        # Create a running job record
+        schedule = await sched_repo.get_by_id(sid)
+        if schedule is None:
+            log.error(
+                "scheduled_job_missing_schedule",
+                job_id=schedule_id,
+                endpoint_id=endpoint_id,
+            )
+            return
+
+        logical_run_time = (
+            scheduled_for
+            or (schedule.next_run_at if trigger_source == "scheduled" else started_at)
+            or started_at
+        )
+        if logical_run_time.tzinfo is None:
+            logical_run_time = logical_run_time.replace(tzinfo=UTC)
+
+        existing_run = await job_repo.get_by_schedule_and_scheduled_for(sid, logical_run_time)
+        if existing_run is not None:
+            log.info(
+                "scheduled_job_duplicate_skipped",
+                job_id=schedule_id,
+                existing_run_id=str(existing_run.id),
+                scheduled_for=logical_run_time.isoformat(),
+            )
+            return
+
+        binding_hash = _binding_hash(
+            timezone_name=schedule.timezone,
+            parameter_bindings=schedule.parameter_bindings_json or {},
+            window=schedule.window_config_json,
+        )
+
+        # Create a running job record before external I/O. The unique logical
+        # run key makes retries/multiple workers idempotent for a given fire time.
         job_run = JobRun(
             id=run_id,
             schedule_id=sid,
             endpoint_id=eid,
             started_at=started_at,
             status=JobRunStatus.running,
+            scheduled_for=logical_run_time,
+            trigger_source=trigger_source,
+            binding_hash=binding_hash,
         )
-        await job_repo.create(job_run)
-        await db.commit()
+        try:
+            await job_repo.create(job_run)
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            log.info(
+                "scheduled_job_duplicate_skipped",
+                job_id=schedule_id,
+                scheduled_for=logical_run_time.isoformat(),
+            )
+            return
 
         try:
             # Load endpoint and connection
@@ -106,18 +184,35 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             if not endpoint.is_active:
                 raise ValueError(f"Endpoint {eid} is not active.")
 
+            param_schema = endpoint.param_schema_json or {}
+            window = (
+                ScheduleWindow.model_validate(schedule.window_config_json)
+                if schedule.window_config_json
+                else None
+            )
+            context = resolve_schedule_parameters(
+                param_schema=param_schema,
+                parameter_bindings=schedule.parameter_bindings_json or {},
+                timezone_name=schedule.timezone,
+                scheduled_for=logical_run_time,
+                window=window,
+            )
+            resolved_parameters = jsonable_encoder(context.parameters)
+            await job_repo.update(
+                job_run,
+                {
+                    "logical_date": context.logical_date,
+                    "window_start": context.window_start,
+                    "window_end": context.window_end,
+                    "resolved_params_json": resolved_parameters,
+                },
+            )
+            await db.commit()
+            params = context.parameters
+
             connection = await conn_repo.get_by_id(endpoint.connection_id)
             if connection is None or not connection.is_active:
                 raise ValueError("Data source connection is unavailable.")
-
-            # Scheduled snapshots have no request inputs, so validate and
-            # resolve every configured static or dynamic default through the
-            # same typed model used by live data requests.
-            param_schema = endpoint.param_schema_json or {}
-            # Keep explicit NULL defaults in the bind dictionary. Omitting a
-            # None-valued entry makes Oracle see a missing bind variable rather
-            # than a bind whose value is SQL NULL.
-            params = resolve_scheduled_params(param_schema)
 
             columns, rows, duration_ms = await execute_query(
                 connection=connection,
@@ -171,14 +266,15 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             )
 
             # Update schedule last_run_at
-            schedule = await sched_repo.get_by_id(sid)
-            if schedule:
-                await sched_repo.update(
-                    schedule,
-                    {
-                        "last_run_at": finished_at,
-                    },
-                )
+            current_schedule = await sched_repo.get_by_id(sid)
+            if current_schedule:
+                schedule_changes: dict[str, object] = {
+                    "last_run_at": finished_at,
+                }
+                next_run_at = _get_next_run_at(sid)
+                if next_run_at is not None:
+                    schedule_changes["next_run_at"] = next_run_at
+                await sched_repo.update(current_schedule, schedule_changes)
 
             await db.commit()
 
@@ -189,10 +285,13 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
                 endpoint_id=endpoint_id,
                 row_count=len(rows),
                 duration_ms=duration_ms,
+                scheduled_for=logical_run_time.isoformat(),
+                logical_date=context.logical_date.isoformat(),
+                binding_hash=binding_hash,
                 success=True,
             )
 
-        except (SqlExecutionError, ValueError, Exception) as exc:
+        except Exception as exc:  # noqa: BLE001
             finished_at = datetime.now(UTC)
             error_detail = str(exc)[:5000]
 
@@ -210,14 +309,15 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
             )
 
             # Update schedule last_run_at even on failure
-            schedule = await sched_repo.get_by_id(sid)
-            if schedule:
-                await sched_repo.update(
-                    schedule,
-                    {
-                        "last_run_at": finished_at,
-                    },
-                )
+            current_schedule = await sched_repo.get_by_id(sid)
+            if current_schedule:
+                schedule_changes = {
+                    "last_run_at": finished_at,
+                }
+                next_run_at = _get_next_run_at(sid)
+                if next_run_at is not None:
+                    schedule_changes["next_run_at"] = next_run_at
+                await sched_repo.update(current_schedule, schedule_changes)
 
             await db.commit()
 
@@ -226,6 +326,8 @@ async def execute_scheduled_job(schedule_id: str, endpoint_id: str) -> None:
                 job_id=schedule_id,
                 run_id=str(run_id),
                 endpoint_id=endpoint_id,
+                scheduled_for=logical_run_time.isoformat(),
+                binding_hash=binding_hash,
                 error=error_detail,
                 success=False,
             )
@@ -236,18 +338,23 @@ async def restore_active_schedules() -> int:
     restored = 0
     failed_schedule_ids: list[str] = []
     async with AsyncSessionLocal() as db:
-        schedules = await ScheduleRepository(db).get_all(active_only=True)
+        schedule_repo = ScheduleRepository(db)
+        schedules = await schedule_repo.get_all(active_only=True)
+        updated_next_run = False
         for schedule in schedules:
             try:
-                registered = add_schedule_job(
+                next_run_at = add_schedule_job(
                     schedule_id=schedule.id,
                     endpoint_id=schedule.endpoint_id,
                     schedule_type=schedule.schedule_type,
                     cron_expression=schedule.cron_expression,
                     interval_seconds=schedule.interval_seconds,
+                    timezone_name=getattr(schedule, "timezone", "UTC"),
                 )
-                if not registered:
+                if not isinstance(next_run_at, datetime):
                     raise ValueError("Schedule configuration could not be registered.")
+                await schedule_repo.update(schedule, {"next_run_at": next_run_at})
+                updated_next_run = True
                 restored += 1
             except Exception as exc:  # noqa: BLE001
                 failed_schedule_ids.append(str(schedule.id))
@@ -256,6 +363,8 @@ async def restore_active_schedules() -> int:
                     schedule_id=str(schedule.id),
                     error=str(exc),
                 )
+        if updated_next_run:
+            await db.commit()
     if failed_schedule_ids:
         failed = ", ".join(failed_schedule_ids)
         raise RuntimeError(f"Failed to restore active schedules: {failed}")
@@ -272,6 +381,7 @@ async def start_scheduler() -> None:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler  # noqa: PLC0415
 
         scheduler = AsyncIOScheduler(
+            timezone=ZoneInfo("UTC"),
             job_defaults={
                 "coalesce": True,
                 "max_instances": 1,
@@ -312,11 +422,12 @@ def add_schedule_job(
     schedule_type: str,
     cron_expression: str | None = None,
     interval_seconds: int | None = None,
-) -> bool:
+    timezone_name: str = "UTC",
+) -> datetime | None:
     """Register a job in APScheduler."""
     if _scheduler is None:
         log.warning("scheduler_not_running", action="add_job")
-        return False
+        return None
 
     from apscheduler.schedulers.asyncio import AsyncIOScheduler  # noqa: PLC0415
 
@@ -345,20 +456,24 @@ def add_schedule_job(
         kwargs["day"] = parts[2]
         kwargs["month"] = parts[3]
         kwargs["day_of_week"] = parts[4]
+        kwargs["timezone"] = ZoneInfo(timezone_name)
     elif schedule_type == "interval" and interval_seconds:
         kwargs["trigger"] = "interval"
         kwargs["seconds"] = interval_seconds
+        kwargs["timezone"] = ZoneInfo(timezone_name)
     else:
         log.warning("invalid_schedule_config", schedule_id=str(schedule_id))
-        return False
+        return None
 
-    scheduler.add_job(**kwargs)
+    job = scheduler.add_job(**kwargs)
     log.info(
         "scheduler_job_added",
         job_id=job_id,
         schedule_type=schedule_type,
+        timezone=timezone_name,
     )
-    return True
+    next_run_time = getattr(job, "next_run_time", None)
+    return next_run_time if isinstance(next_run_time, datetime) else None
 
 
 def remove_schedule_job(schedule_id: uuid.UUID) -> None:

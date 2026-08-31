@@ -47,8 +47,8 @@ describe("ConfigStep platform authentication fallback", () => {
   });
 });
 
-describe("ConfigStep snapshot defaults", () => {
-  it("lists snapshot parameters that have no default", () => {
+describe("ConfigStep snapshot scheduling guidance", () => {
+  it("explains that scheduled values are configured separately", () => {
     render(
       <ConfigStep
         state={makeState({
@@ -63,12 +63,13 @@ describe("ConfigStep snapshot defaults", () => {
       />,
     );
 
-    expect(screen.getByText(/Snapshot defaults required/i)).toBeInTheDocument();
-    expect(screen.getByText(/:end_date/)).toBeInTheDocument();
-    expect(screen.queryByText(/:start_date/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Scheduled values are configured with the schedule/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/logical run date/i)).toBeInTheDocument();
   });
 
-  it("accepts false and zero as configured snapshot defaults", () => {
+  it("shows the guidance even when endpoint defaults exist", () => {
     render(
       <ConfigStep
         state={makeState({
@@ -83,6 +84,8 @@ describe("ConfigStep snapshot defaults", () => {
       />,
     );
 
-    expect(screen.queryByText(/Snapshot defaults required/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Scheduled values are configured with the schedule/i),
+    ).toBeInTheDocument();
   });
 });

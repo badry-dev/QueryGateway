@@ -11,12 +11,15 @@ Responsibilities:
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import structlog
+from pydantic import ValidationError
 
-from app.models.endpoint import ApiEndpoint
+from app.models.endpoint import ApiEndpoint, DataStrategy
 from app.repositories.connection import ConnectionRepository
 from app.repositories.endpoint import EndpointRepository
+from app.repositories.schedule import ScheduleRepository
 from app.schemas.endpoint import (
     PUBLIC_OPT_IN_MESSAGE,
     EndpointCreate,
@@ -28,8 +31,8 @@ from app.schemas.endpoint import (
     SqlPreviewRequest,
     SqlPreviewResponse,
     extract_bind_params,
-    require_snapshot_defaults,
 )
+from app.services.schedule_bindings import ScheduleBindingError, resolve_schedule_parameters
 from app.sql.executor import SqlExecutionError, execute_query
 
 log = structlog.get_logger()
@@ -40,7 +43,12 @@ def _to_response(obj: ApiEndpoint) -> EndpointResponse:
     if obj.param_schema_json:
         for k, v in obj.param_schema_json.items():
             if isinstance(v, dict):
-                param_schema[k] = ParamDescriptor(**v)
+                try:
+                    param_schema[k] = ParamDescriptor(**v)
+                except ValidationError as exc:
+                    raise SnapshotConfigurationError(
+                        "Endpoint has an invalid parameter schema."
+                    ) from exc
 
     column_map: dict[str, str] = {}
     if obj.column_map_json:
@@ -76,13 +84,13 @@ class EndpointService:
         self,
         repo: EndpointRepository,
         conn_repo: ConnectionRepository | None = None,
+        schedule_repo: ScheduleRepository | None = None,
     ) -> None:
         self._repo = repo
         self._conn_repo = conn_repo
+        self._schedule_repo = schedule_repo
 
-    async def list_endpoints(
-        self, *, active_only: bool = False
-    ) -> Sequence[EndpointResponse]:
+    async def list_endpoints(self, *, active_only: bool = False) -> Sequence[EndpointResponse]:
         rows = await self._repo.get_all(active_only=active_only)
         return [_to_response(r) for r in rows]
 
@@ -161,8 +169,7 @@ class EndpointService:
             "deprecation_note",
         }
         changes: dict[str, object] = {
-            field: getattr(payload, field)
-            for field in payload.model_fields_set & _updatable
+            field: getattr(payload, field) for field in payload.model_fields_set & _updatable
         }
 
         # Always preserve an authentication path in the merged state: either a
@@ -182,14 +189,6 @@ class EndpointService:
 
         if "data_strategy" in payload.model_fields_set and payload.data_strategy is None:
             raise SnapshotConfigurationError("data_strategy cannot be null.")
-        effective_strategy = payload.data_strategy or obj.data_strategy
-        effective_param_schema: dict[str, ParamDescriptor] | dict[str, object]
-        if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
-            effective_param_schema = payload.param_schema
-        else:
-            effective_param_schema = obj.param_schema_json or {}
-        require_snapshot_defaults(effective_strategy, effective_param_schema)
-
         # Uniqueness check on name change
         if payload.name is not None and payload.name != obj.name:
             conflict = await self._repo.get_by_name(payload.name)
@@ -200,21 +199,48 @@ class EndpointService:
         if payload.path is not None and payload.path != obj.path:
             conflict = await self._repo.get_by_path(payload.path)
             if conflict:
-                raise ValueError(
-                    f"An endpoint with path '{payload.path}' already exists."
-                )
+                raise ValueError(f"An endpoint with path '{payload.path}' already exists.")
+
+        effective_param_schema: dict[str, object] = obj.param_schema_json or {}
 
         # Handle param_schema serialization
         if "param_schema" in payload.model_fields_set and payload.param_schema is not None:
-            changes["param_schema_json"] = {
+            effective_param_schema = {
                 k: v.model_dump() for k, v in payload.param_schema.items()
             }
+            changes["param_schema_json"] = effective_param_schema
             changes.pop("param_schema", None)
 
         # Handle column_map serialization
         if "column_map" in payload.model_fields_set and payload.column_map is not None:
             changes["column_map_json"] = dict(payload.column_map)
             changes.pop("column_map", None)
+
+        if self._schedule_repo is not None:
+            schedule = await self._schedule_repo.get_by_endpoint_id(endpoint_id)
+            if schedule is not None:
+                effective_strategy = payload.data_strategy or obj.data_strategy
+                if effective_strategy != DataStrategy.snapshot:
+                    raise ScheduleBindingError(
+                        "Delete the attached schedule before changing this endpoint to live data."
+                    )
+
+                effective_sql = payload.sql_text or obj.sql_text
+                sql_params = set(extract_bind_params(effective_sql))
+                schema_params = set(effective_param_schema)
+                if sql_params != schema_params:
+                    raise ScheduleBindingError(
+                        "Endpoint SQL and parameter schema must continue to match while a schedule "
+                        "is attached."
+                    )
+
+                resolve_schedule_parameters(
+                    param_schema=effective_param_schema,
+                    parameter_bindings=schedule.parameter_bindings_json or {},
+                    timezone_name=schedule.timezone,
+                    scheduled_for=datetime.now(UTC),
+                    window=schedule.window_config_json,
+                )
 
         obj = await self._repo.update(obj, changes)
 
@@ -227,9 +253,7 @@ class EndpointService:
         )
         return _to_response(obj)
 
-    async def delete_endpoint(
-        self, endpoint_id: uuid.UUID, *, actor: str = "system"
-    ) -> bool:
+    async def delete_endpoint(self, endpoint_id: uuid.UUID, *, actor: str = "system") -> bool:
         obj = await self._repo.get_by_id(endpoint_id)
         if obj is None:
             return False
@@ -245,9 +269,7 @@ class EndpointService:
         )
         return True
 
-    async def preview_sql(
-        self, payload: SqlPreviewRequest
-    ) -> SqlPreviewResponse:
+    async def preview_sql(self, payload: SqlPreviewRequest) -> SqlPreviewResponse:
         """Execute SQL in preview mode and return sample results."""
         if not self._conn_repo:
             raise ValueError("Connection repository not available for preview.")

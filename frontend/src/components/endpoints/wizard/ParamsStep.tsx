@@ -171,9 +171,9 @@ export function ParamsStep({ state, onUpdateParam }: ParamsStepProps) {
         Define types and defaults for bind parameters detected in your query.
       </p>
       {state.data_strategy === "snapshot" && entries.length > 0 && (
-        <p className="text-sm text-amber-700">
-          Snapshot endpoints require a fixed, NULL, or dynamic default for every parameter. Dynamic
-          dates are evaluated from the application server date whenever the snapshot runs.
+        <p className="text-sm text-muted-foreground">
+          Endpoint defaults remain useful for live requests and previews. Scheduled values are
+          configured separately when you create the snapshot schedule.
         </p>
       )}
       {entries.length === 0 ? (

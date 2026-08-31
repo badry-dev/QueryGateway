@@ -23,7 +23,6 @@ import { ReviewStep } from "./wizard/ReviewStep";
 import { SqlStep } from "./wizard/SqlStep";
 import { extractBindParams, reconcileParamSchema } from "./wizard/bindParams";
 import {
-  missingSnapshotDefaults,
   resolvePreviewParameterDefault,
   updateParameterDescriptor,
 } from "./wizard/parameterDefaults";
@@ -147,10 +146,7 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
       // An endpoint without a dedicated method requires an explicit opt-in to
       // platform-admin Bearer authentication, mirroring the server-side 422.
       const authOk = !!state.auth_method_id || state.allow_unauthenticated;
-      const snapshotDefaultsOk =
-        state.data_strategy !== "snapshot" ||
-        missingSnapshotDefaults(state.param_schema).length === 0;
-      return !!state.name.trim() && !!state.path.trim() && authOk && snapshotDefaultsOk;
+      return !!state.name.trim() && !!state.path.trim() && authOk;
     }
     return true;
   };

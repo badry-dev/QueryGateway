@@ -116,14 +116,19 @@ def _build_field(
         if isinstance(max_length, int) and max_length >= 1:
             annotation = Annotated[str, Field(max_length=max_length)]  # type: ignore[assignment]
 
-    # Scheduled execution must resolve every configured default without
-    # request input. Live requests use ``enforce_required=True`` so a
-    # scheduler default never weakens their public required-parameter
-    # contract. Optional request fields continue to use their defaults.
+    # ``required`` governs whether the caller must supply the bind, while an
+    # optional parameter may still be supplied explicitly as SQL NULL. Keep
+    # that nullability independent from whichever endpoint default is stored.
+    if not required or default_is_null:
+        annotation = annotation | None  # type: ignore[assignment]
+
+    # Live requests use ``enforce_required=True`` so an endpoint default never
+    # weakens their public required-parameter contract. Optional request fields
+    # continue to use their endpoint defaults. Schedules resolve their separate
+    # binding configuration before validating the resulting values here.
     if enforce_required and required:
         field_default = ...
     elif default_is_null:
-        annotation = annotation | None  # type: ignore[assignment]
         field_default = None
     elif default is not None:
         field_default = default
@@ -137,7 +142,6 @@ def _build_field(
         # to ``T | None`` here.  This path matches legacy behavior:
         # ``_coerce_param`` skipped optional params entirely when they
         # weren't supplied.
-        annotation = annotation | None  # type: ignore[assignment]
         field_default = None
 
     return annotation, field_default

@@ -26,6 +26,9 @@ import type {
   JobRun,
   Schedule,
   ScheduleCreate,
+  SchedulePreviewRequest,
+  SchedulePreviewResponse,
+  ScheduleRunRequest,
   ScheduleUpdate,
   SnapshotSummary,
 } from "@/types/schedule";
@@ -203,14 +206,19 @@ export const schedulesApi = {
   create: (payload: ScheduleCreate): Promise<Schedule> =>
     http.post<Schedule>("/api/v1/admin/schedules/", payload).then((r) => r.data),
 
+  preview: (payload: SchedulePreviewRequest): Promise<SchedulePreviewResponse> =>
+    http
+      .post<SchedulePreviewResponse>("/api/v1/admin/schedules/preview", payload)
+      .then((r) => r.data),
+
   update: (id: string, payload: ScheduleUpdate): Promise<Schedule> =>
     http.put<Schedule>(`/api/v1/admin/schedules/${id}`, payload).then((r) => r.data),
 
   delete: (id: string): Promise<void> =>
     http.delete(`/api/v1/admin/schedules/${id}`).then(() => undefined),
 
-  runNow: (id: string): Promise<{ status: string }> =>
-    http.post<{ status: string }>(`/api/v1/admin/schedules/${id}/run`).then((r) => r.data),
+  runNow: (id: string, payload?: ScheduleRunRequest): Promise<{ status: string }> =>
+    http.post<{ status: string }>(`/api/v1/admin/schedules/${id}/run`, payload).then((r) => r.data),
 
   pause: (id: string): Promise<Schedule> =>
     http.post<Schedule>(`/api/v1/admin/schedules/${id}/pause`).then((r) => r.data),

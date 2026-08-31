@@ -9,16 +9,13 @@ Unit tests exercise schema validation, SQL safety, and bind parameter extraction
 import uuid
 
 import pytest
-from app.models.endpoint import DataStrategy
 from app.schemas.endpoint import (
     EndpointCreate,
     EndpointResponse,
     EndpointUpdate,
     ParamDescriptor,
-    SnapshotConfigurationError,
     SqlPreviewRequest,
     extract_bind_params,
-    require_snapshot_defaults,
     validate_sql_safety,
 )
 
@@ -156,28 +153,22 @@ def test_endpoint_update_rejects_incompatible_static_default() -> None:
         )
 
 
-def test_snapshot_default_validation_rejects_incompatible_stored_default() -> None:
-    with pytest.raises(SnapshotConfigurationError, match="invalid parameter schema"):
-        require_snapshot_defaults(
-            DataStrategy.snapshot,
-            {"store_id": {"type": "integer", "required": True, "default": "abc"}},
-        )
+def test_snapshot_endpoint_allows_schedule_to_own_parameter_values() -> None:
+    payload = EndpointCreate(
+        name="snapshot-without-defaults",
+        path="snapshot-without-defaults",
+        connection_id=uuid.uuid4(),
+        sql_text=("SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"),
+        param_schema={
+            "start_date": {"type": "date", "required": True},
+            "end_date": {"type": "date", "required": True},
+        },
+        allow_unauthenticated=True,
+        data_strategy="snapshot",
+    )
 
-
-def test_snapshot_endpoint_requires_defaults_for_all_parameters() -> None:
-    with pytest.raises(ValueError, match=r"Missing: :end_date, :start_date"):
-        EndpointCreate(
-            name="snapshot-without-defaults",
-            path="snapshot-without-defaults",
-            connection_id=uuid.uuid4(),
-            sql_text=("SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"),
-            param_schema={
-                "start_date": {"type": "date", "required": True},
-                "end_date": {"type": "date", "required": True},
-            },
-            allow_unauthenticated=True,
-            data_strategy="snapshot",
-        )
+    assert payload.param_schema["start_date"].default is None
+    assert payload.param_schema["end_date"].default is None
 
 
 def test_snapshot_endpoint_accepts_dynamic_defaults() -> None:
@@ -490,7 +481,7 @@ async def test_update_endpoint(async_client: object) -> None:
 
 
 @pytest.mark.integration
-async def test_update_live_endpoint_to_snapshot_requires_merged_defaults(
+async def test_update_live_endpoint_to_snapshot_leaves_values_to_schedule(
     async_client: object,
 ) -> None:
     from httpx import AsyncClient
@@ -518,28 +509,13 @@ async def test_update_live_endpoint_to_snapshot_requires_merged_defaults(
     )
     assert endpoint.status_code == 201
 
-    invalid = await client.put(
+    updated = await client.put(
         f"/api/v1/admin/endpoints/{endpoint.json()['id']}",
         json={"data_strategy": "snapshot"},
     )
-    assert invalid.status_code == 422
-    assert ":business_date" in invalid.json()["detail"]
-
-    valid = await client.put(
-        f"/api/v1/admin/endpoints/{endpoint.json()['id']}",
-        json={
-            "data_strategy": "snapshot",
-            "param_schema": {
-                "business_date": {
-                    "type": "date",
-                    "required": True,
-                    "default_expression": "today",
-                }
-            },
-        },
-    )
-    assert valid.status_code == 200
-    assert valid.json()["param_schema"]["business_date"]["default_expression"] == "today"
+    assert updated.status_code == 200
+    assert updated.json()["data_strategy"] == "snapshot"
+    assert updated.json()["param_schema"]["business_date"]["default"] is None
 
 
 @pytest.mark.integration

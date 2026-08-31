@@ -5,6 +5,7 @@ import { Pause, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CronScheduleBuilder } from "@/components/schedules/CronScheduleBuilder";
+import { ScheduleParameterBindings } from "@/components/schedules/ScheduleParameterBindings";
 import {
   buildCronExpression,
   describeCronExpression,
@@ -12,6 +13,11 @@ import {
   isValidCronExpression,
   type CronBuilderValue,
 } from "@/components/schedules/cronSchedule";
+import {
+  bindingsUseWindow,
+  scheduleBindingsComplete,
+  suggestScheduleBindings,
+} from "@/components/schedules/scheduleBindings";
 import {
   Dialog,
   DialogContent,
@@ -26,7 +32,29 @@ import { Select } from "@/components/ui/select";
 import { endpointsApi, getApiError, schedulesApi } from "@/lib/api";
 import { queryKeys } from "@/lib/queryClient";
 import type { Endpoint } from "@/types/endpoint";
-import type { JobRun, Schedule, ScheduleCreate } from "@/types/schedule";
+import type { JobRun, Schedule, ScheduleCreate, SchedulePreviewRequest } from "@/types/schedule";
+
+const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const commonTimezones = Array.from(
+  new Set([
+    "UTC",
+    browserTimezone,
+    "Asia/Riyadh",
+    "Asia/Dubai",
+    "Europe/London",
+    "America/New_York",
+  ]),
+);
+
+function initialCreateForm(): ScheduleCreate {
+  return {
+    endpoint_id: "",
+    schedule_type: "interval",
+    interval_seconds: 300,
+    timezone: browserTimezone,
+    parameter_bindings: {},
+  };
+}
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -46,13 +74,10 @@ export function SchedulesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [deleteSchedule, setDeleteSchedule] = useState<Schedule | null>(null);
   const [viewJobsFor, setViewJobsFor] = useState<Schedule | null>(null);
-  const [createForm, setCreateForm] = useState<ScheduleCreate>({
-    endpoint_id: "",
-    schedule_type: "interval",
-    interval_seconds: 300,
-  });
+  const [createForm, setCreateForm] = useState<ScheduleCreate>(initialCreateForm);
   const [cronBuilder, setCronBuilder] = useState<CronBuilderValue>(INITIAL_CRON_BUILDER);
   const [createError, setCreateError] = useState("");
+  const [previewError, setPreviewError] = useState("");
   const [deleteError, setDeleteError] = useState("");
 
   const {
@@ -83,8 +108,9 @@ export function SchedulesPage() {
       qc.invalidateQueries({ queryKey: queryKeys.schedules.all });
       setShowCreate(false);
       setCreateError("");
-      setCreateForm({ endpoint_id: "", schedule_type: "interval", interval_seconds: 300 });
+      setCreateForm(initialCreateForm());
       setCronBuilder(INITIAL_CRON_BUILDER);
+      setPreviewError("");
     },
     onError: (err) => setCreateError(getApiError(err)),
   });
@@ -98,6 +124,17 @@ export function SchedulesPage() {
     },
     onError: (err) => setDeleteError(getApiError(err)),
   });
+
+  const previewMutation = useMutation({
+    mutationFn: (payload: SchedulePreviewRequest) => schedulesApi.preview(payload),
+    onSuccess: () => setPreviewError(""),
+    onError: (err) => setPreviewError(getApiError(err)),
+  });
+
+  const resetPreview = () => {
+    previewMutation.reset();
+    setPreviewError("");
+  };
 
   const runNowMutation = useMutation({
     mutationFn: (id: string) => schedulesApi.runNow(id),
@@ -119,8 +156,28 @@ export function SchedulesPage() {
   // Filter endpoints that don't already have a schedule
   const scheduledEndpointIds = new Set(schedules.map((s) => s.endpoint_id));
   const availableEndpoints = endpoints.filter(
-    (e) => e.is_active && !scheduledEndpointIds.has(e.id),
+    (e) => e.is_active && e.data_strategy === "snapshot" && !scheduledEndpointIds.has(e.id),
   );
+  const selectedEndpoint = endpointMap.get(createForm.endpoint_id);
+  const parameterBindings = createForm.parameter_bindings ?? {};
+  const bindingsComplete = selectedEndpoint
+    ? scheduleBindingsComplete(selectedEndpoint.param_schema, parameterBindings, createForm.window)
+    : false;
+  const timingComplete =
+    createForm.schedule_type === "interval"
+      ? (createForm.interval_seconds ?? 0) >= 10
+      : isValidCronExpression(createForm.cron_expression ?? "");
+
+  const previewPayload = (): SchedulePreviewRequest => ({
+    endpoint_id: createForm.endpoint_id,
+    schedule_type: createForm.schedule_type,
+    cron_expression: createForm.cron_expression,
+    interval_seconds: createForm.interval_seconds,
+    timezone: createForm.timezone ?? "UTC",
+    parameter_bindings: parameterBindings,
+    window: createForm.window,
+    count: 3,
+  });
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -198,6 +255,7 @@ export function SchedulesPage() {
                           <code className="text-[11px] text-muted-foreground">
                             {s.cron_expression}
                           </code>
+                          <p className="text-[11px] text-muted-foreground">{s.timezone}</p>
                         </div>
                       ) : (
                         `Every ${s.interval_seconds}s`
@@ -271,7 +329,7 @@ export function SchedulesPage() {
 
       {/* Create Dialog */}
       <Dialog open={showCreate} onOpenChange={() => setShowCreate(false)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Schedule</DialogTitle>
             <DialogDescription>
@@ -285,11 +343,22 @@ export function SchedulesPage() {
           )}
           <div className="space-y-3">
             <div>
-              <Label>Endpoint</Label>
+              <Label htmlFor="schedule-endpoint">Endpoint</Label>
               <Select
+                id="schedule-endpoint"
                 className="mt-1"
                 value={createForm.endpoint_id}
-                onChange={(e) => setCreateForm((f) => ({ ...f, endpoint_id: e.target.value }))}
+                onChange={(e) => {
+                  const endpointId = e.target.value;
+                  const endpoint = endpointMap.get(endpointId);
+                  setCreateForm((form) => ({
+                    ...form,
+                    endpoint_id: endpointId,
+                    parameter_bindings: suggestScheduleBindings(endpoint?.param_schema ?? {}),
+                    window: undefined,
+                  }));
+                  resetPreview();
+                }}
               >
                 <option value="">Select endpoint...</option>
                 {availableEndpoints.map((ep) => (
@@ -298,6 +367,9 @@ export function SchedulesPage() {
                   </option>
                 ))}
               </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Only active snapshot endpoints without an existing schedule are shown.
+              </p>
             </div>
             <div>
               <Label htmlFor="schedule-type">Timing method</Label>
@@ -313,6 +385,7 @@ export function SchedulesPage() {
                     cron_expression: v === "cron" ? buildCronExpression(cronBuilder) : undefined,
                     interval_seconds: v === "interval" ? 300 : undefined,
                   }));
+                  resetPreview();
                 }}
               >
                 <option value="interval">Repeat at an interval</option>
@@ -321,18 +394,20 @@ export function SchedulesPage() {
             </div>
             {createForm.schedule_type === "interval" && (
               <div>
-                <Label>Interval (seconds)</Label>
+                <Label htmlFor="schedule-interval-seconds">Interval (seconds)</Label>
                 <Input
+                  id="schedule-interval-seconds"
                   className="mt-1"
                   type="number"
                   min={10}
                   value={createForm.interval_seconds ?? 300}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setCreateForm((f) => ({
                       ...f,
                       interval_seconds: parseInt(e.target.value, 10) || 10,
-                    }))
-                  }
+                    }));
+                    resetPreview();
+                  }}
                 />
                 <p className="mt-1 text-xs text-muted-foreground">Minimum 10 seconds.</p>
               </div>
@@ -346,8 +421,100 @@ export function SchedulesPage() {
                     ...form,
                     cron_expression: buildCronExpression(value),
                   }));
+                  resetPreview();
                 }}
               />
+            )}
+            <div>
+              <Label htmlFor="schedule-timezone">Schedule timezone</Label>
+              <Select
+                id="schedule-timezone"
+                className="mt-1"
+                value={createForm.timezone ?? "UTC"}
+                onChange={(event) => {
+                  setCreateForm((form) => ({ ...form, timezone: event.target.value }));
+                  resetPreview();
+                }}
+              >
+                {commonTimezones.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </Select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Cron times and logical dates are evaluated in this timezone.
+              </p>
+            </div>
+            {selectedEndpoint && (
+              <ScheduleParameterBindings
+                paramSchema={selectedEndpoint.param_schema}
+                bindings={parameterBindings}
+                window={createForm.window}
+                onBindingsChange={(bindings) => {
+                  setCreateForm((form) => ({
+                    ...form,
+                    parameter_bindings: bindings,
+                    window: bindingsUseWindow(bindings)
+                      ? (form.window ?? { preset: "previous_day" })
+                      : undefined,
+                  }));
+                  resetPreview();
+                }}
+                onWindowChange={(window) => {
+                  setCreateForm((form) => ({ ...form, window }));
+                  resetPreview();
+                }}
+              />
+            )}
+            {previewError && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {previewError}
+              </div>
+            )}
+            {selectedEndpoint && (
+              <div className="space-y-2 rounded-md border p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-medium">Resolved run preview</h4>
+                    <p className="text-xs text-muted-foreground">
+                      Verify the next three logical dates and bound values before creating.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => previewMutation.mutate(previewPayload())}
+                    disabled={!bindingsComplete || !timingComplete || previewMutation.isPending}
+                  >
+                    {previewMutation.isPending ? "Resolving..." : "Preview runs"}
+                  </Button>
+                </div>
+                {previewMutation.data && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="px-2 py-1.5 text-left">Scheduled for</th>
+                          <th className="px-2 py-1.5 text-left">Logical date</th>
+                          <th className="px-2 py-1.5 text-left">Resolved parameters</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewMutation.data.runs.map((run) => (
+                          <tr key={run.scheduled_for} className="border-b last:border-0">
+                            <td className="px-2 py-1.5">{formatDate(run.scheduled_for)}</td>
+                            <td className="px-2 py-1.5">{run.logical_date}</td>
+                            <td className="px-2 py-1.5 font-mono">
+                              {JSON.stringify(run.resolved_parameters)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             )}
           </div>
           <DialogFooter>
@@ -359,8 +526,8 @@ export function SchedulesPage() {
               disabled={
                 createMutation.isPending ||
                 !createForm.endpoint_id ||
-                (createForm.schedule_type === "cron" &&
-                  !isValidCronExpression(createForm.cron_expression ?? ""))
+                !timingComplete ||
+                !bindingsComplete
               }
             >
               {createMutation.isPending ? "Creating..." : "Create"}
@@ -428,6 +595,7 @@ export function SchedulesPage() {
                 <thead>
                   <tr className="border-b">
                     <th className="px-2 py-1.5 text-left font-medium">Started</th>
+                    <th className="px-2 py-1.5 text-left font-medium">Logical date</th>
                     <th className="px-2 py-1.5 text-left font-medium">Duration</th>
                     <th className="px-2 py-1.5 text-left font-medium">Status</th>
                     <th className="px-2 py-1.5 text-left font-medium">Rows</th>
@@ -438,6 +606,7 @@ export function SchedulesPage() {
                   {jobRuns.map((jr: JobRun) => (
                     <tr key={jr.id} className="border-b last:border-0">
                       <td className="px-2 py-1.5">{formatDate(jr.started_at)}</td>
+                      <td className="px-2 py-1.5">{jr.logical_date ?? "—"}</td>
                       <td className="px-2 py-1.5">
                         {formatDuration(jr.started_at, jr.finished_at)}
                       </td>

@@ -7,14 +7,17 @@ Unit tests exercise schema validation and cron/interval configuration.
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from app.schemas.schedule import (
     JobRunResponse,
     ScheduleCreate,
+    ScheduleParameterBinding,
+    SchedulePreviewResponse,
     ScheduleResponse,
     ScheduleUpdate,
+    ScheduleWindow,
     SnapshotDetailResponse,
     SnapshotResponse,
 )
@@ -40,6 +43,34 @@ def test_schedule_create_interval_valid() -> None:
     )
     assert payload.schedule_type == "interval"
     assert payload.interval_seconds == 300
+
+
+def test_schedule_create_accepts_timezone_and_declarative_bindings() -> None:
+    payload = ScheduleCreate(
+        endpoint_id=uuid.uuid4(),
+        schedule_type="cron",
+        cron_expression="0 6 * * *",
+        timezone="Asia/Riyadh",
+        parameter_bindings={
+            "start_date": ScheduleParameterBinding(source="window_start"),
+            "end_date": ScheduleParameterBinding(source="window_end"),
+        },
+        window=ScheduleWindow(preset="last_n_complete_days", days=7),
+    )
+
+    assert payload.timezone == "Asia/Riyadh"
+    assert payload.parameter_bindings["start_date"].source == "window_start"
+    assert payload.window == ScheduleWindow(preset="last_n_complete_days", days=7)
+
+
+def test_schedule_create_rejects_unknown_timezone() -> None:
+    with pytest.raises(ValueError, match="Unknown IANA timezone"):
+        ScheduleCreate(
+            endpoint_id=uuid.uuid4(),
+            schedule_type="cron",
+            cron_expression="0 6 * * *",
+            timezone="Mars/Olympus_Mons",
+        )
 
 
 def test_schedule_create_cron_requires_expression() -> None:
@@ -128,6 +159,14 @@ def test_schedule_response_fields() -> None:
     assert "is_active" in fields
     assert "last_run_at" in fields
     assert "next_run_at" in fields
+    assert "timezone" in fields
+    assert "parameter_bindings" in fields
+    assert "window" in fields
+
+
+def test_schedule_preview_response_contains_resolved_run_context() -> None:
+    fields = SchedulePreviewResponse.model_fields
+    assert "runs" in fields
 
 
 def test_job_run_response_fields() -> None:
@@ -140,6 +179,13 @@ def test_job_run_response_fields() -> None:
     assert "status" in fields
     assert "row_count" in fields
     assert "error_detail" in fields
+    assert "scheduled_for" in fields
+    assert "logical_date" in fields
+    assert "window_start" in fields
+    assert "window_end" in fields
+    assert "resolved_parameters" in fields
+    assert "trigger_source" in fields
+    assert "binding_hash" in fields
 
 
 def test_job_run_response_allows_deleted_schedule_history() -> None:
@@ -190,6 +236,332 @@ def test_snapshot_detail_response_fields() -> None:
 
 
 # ── API integration tests (require PostgreSQL) ──────────────────────────────
+
+
+async def _create_snapshot_endpoint_with_date_range(client: object) -> str:
+    from httpx import AsyncClient
+
+    typed_client: AsyncClient = client  # type: ignore[assignment]
+    connection = await typed_client.post(
+        "/api/v1/admin/connections/",
+        json={
+            "name": f"schedule-binding-conn-{uuid.uuid4().hex[:8]}",
+            "host": "oracle.example.com",
+            "service_name": "ORCLPDB",
+            "username": "hr",
+            "password": "test-password",
+        },
+    )
+    assert connection.status_code == 201
+    endpoint = await typed_client.post(
+        "/api/v1/admin/endpoints/",
+        json={
+            "name": f"schedule-binding-ep-{uuid.uuid4().hex[:8]}",
+            "path": f"schedule-binding-path-{uuid.uuid4().hex[:8]}",
+            "connection_id": connection.json()["id"],
+            "allow_unauthenticated": True,
+            "sql_text": (
+                "SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"
+            ),
+            "param_schema": {
+                "start_date": {"type": "date", "required": True},
+                "end_date": {"type": "date", "required": True},
+            },
+            "data_strategy": "snapshot",
+        },
+    )
+    assert endpoint.status_code == 201
+    return str(endpoint.json()["id"])
+
+
+@pytest.mark.integration
+async def test_schedule_bindings_are_required_at_schedule_creation(
+    async_client: object,
+) -> None:
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+
+    missing = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "end_date": {"source": "run_date"},
+            },
+        },
+    )
+    assert missing.status_code == 422
+    assert "Missing schedule bindings: :start_date" in missing.json()["detail"]
+
+    created = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "relative_date", "offset_days": -7},
+                "end_date": {"source": "run_date"},
+            },
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["timezone"] == "Asia/Riyadh"
+    assert created.json()["parameter_bindings"]["start_date"] == {
+        "source": "relative_date",
+        "value": None,
+        "offset_days": -7,
+    }
+
+
+@pytest.mark.integration
+async def test_endpoint_update_cannot_invalidate_attached_schedule(
+    async_client: object,
+) -> None:
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+    created = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "relative_date", "offset_days": -7},
+                "end_date": {"source": "run_date"},
+            },
+        },
+    )
+    assert created.status_code == 201
+
+    invalid_type = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={
+            "param_schema": {
+                "start_date": {"type": "string", "required": True},
+                "end_date": {"type": "date", "required": True},
+            }
+        },
+    )
+    assert invalid_type.status_code == 422
+    assert ":start_date must be a date parameter" in invalid_type.json()["detail"]
+
+    invalid_schema = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={
+            "param_schema": {
+                "start_date": {"type": "date", "required": True},
+                "replacement_end_date": {"type": "date", "required": True},
+            }
+        },
+    )
+    assert invalid_schema.status_code == 422
+    assert "continue to match" in invalid_schema.json()["detail"]
+
+    live_strategy = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={"data_strategy": "live"},
+    )
+    assert live_strategy.status_code == 422
+    assert "Delete the attached schedule" in live_strategy.json()["detail"]
+
+    unchanged = await client.get(f"/api/v1/admin/endpoints/{endpoint_id}")
+    assert unchanged.json()["data_strategy"] == "snapshot"
+    assert set(unchanged.json()["param_schema"]) == {"start_date", "end_date"}
+
+
+@pytest.mark.integration
+async def test_schedule_rejects_live_endpoint(async_client: object) -> None:
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    connection = await client.post(
+        "/api/v1/admin/connections/",
+        json={
+            "name": f"live-schedule-conn-{uuid.uuid4().hex[:8]}",
+            "host": "oracle.example.com",
+            "service_name": "ORCLPDB",
+            "username": "hr",
+            "password": "test-password",
+        },
+    )
+    endpoint = await client.post(
+        "/api/v1/admin/endpoints/",
+        json={
+            "name": f"live-schedule-ep-{uuid.uuid4().hex[:8]}",
+            "path": f"live-schedule-path-{uuid.uuid4().hex[:8]}",
+            "connection_id": connection.json()["id"],
+            "allow_unauthenticated": True,
+            "sql_text": "SELECT 1 FROM dual",
+            "data_strategy": "live",
+        },
+    )
+
+    response = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint.json()["id"],
+            "schedule_type": "interval",
+            "interval_seconds": 60,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Schedules are supported only for snapshot endpoints."
+
+
+@pytest.mark.integration
+async def test_preview_schedule_resolves_next_runs(async_client: object) -> None:
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+
+    response = await client.post(
+        "/api/v1/admin/schedules/preview",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "window_start"},
+                "end_date": {"source": "window_end"},
+            },
+            "window": {"preset": "last_n_complete_days", "days": 7},
+            "count": 3,
+        },
+    )
+
+    assert response.status_code == 200
+    runs = response.json()["runs"]
+    assert len(runs) == 3
+    assert all(run["scheduled_for"].endswith("+03:00") for run in runs)
+    assert all(run["resolved_parameters"]["start_date"] for run in runs)
+    assert all(run["resolved_parameters"]["end_date"] for run in runs)
+
+
+@pytest.mark.integration
+async def test_scheduled_execution_persists_logical_context_and_is_idempotent(
+    async_client: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.services import scheduler as scheduler_service
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+    created = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "window_start"},
+                "end_date": {"source": "window_end"},
+            },
+            "window": {"preset": "last_n_complete_days", "days": 7},
+        },
+    )
+    assert created.status_code == 201
+    schedule_id = created.json()["id"]
+
+    execute_query = AsyncMock(
+        return_value=(
+            ["ORDER_ID"],
+            [{"ORDER_ID": 42}],
+            12,
+        )
+    )
+    monkeypatch.setattr(scheduler_service, "execute_query", execute_query)
+    scheduled_for = datetime(2026, 8, 31, 3, tzinfo=UTC)
+
+    await scheduler_service.execute_scheduled_job(
+        schedule_id,
+        endpoint_id,
+        scheduled_for=scheduled_for,
+    )
+    await scheduler_service.execute_scheduled_job(
+        schedule_id,
+        endpoint_id,
+        scheduled_for=scheduled_for,
+    )
+
+    runs_response = await client.get(
+        "/api/v1/admin/schedules/jobs/",
+        params={"schedule_id": schedule_id},
+    )
+    assert runs_response.status_code == 200
+    runs = runs_response.json()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "success"
+    assert runs[0]["scheduled_for"] == "2026-08-31T03:00:00Z"
+    assert runs[0]["logical_date"] == "2026-08-31"
+    assert runs[0]["window_start"] == "2026-08-24"
+    assert runs[0]["window_end"] == "2026-08-30"
+    assert runs[0]["resolved_parameters"] == {
+        "start_date": "2026-08-24",
+        "end_date": "2026-08-30",
+    }
+    assert runs[0]["trigger_source"] == "scheduled"
+    assert len(runs[0]["binding_hash"]) == 64
+    execute_query.assert_awaited_once()
+    assert execute_query.await_args is not None
+    assert execute_query.await_args.kwargs["params"] == {
+        "start_date": date(2026, 8, 24),
+        "end_date": date(2026, 8, 30),
+    }
+
+
+@pytest.mark.integration
+async def test_run_now_accepts_an_explicit_logical_date(
+    async_client: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.services import schedule as schedule_service
+    from httpx import AsyncClient
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+    created = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "relative_date", "offset_days": -1},
+                "end_date": {"source": "run_date"},
+            },
+        },
+    )
+    execute_job = AsyncMock()
+    monkeypatch.setattr(schedule_service, "execute_scheduled_job", execute_job)
+
+    response = await client.post(
+        f"/api/v1/admin/schedules/{created.json()['id']}/run",
+        json={"logical_date": "2026-08-30"},
+    )
+
+    assert response.status_code == 202
+    execute_job.assert_awaited_once()
+    assert execute_job.await_args is not None
+    assert execute_job.await_args.kwargs["trigger_source"] == "manual"
+    assert execute_job.await_args.kwargs["scheduled_for"].isoformat() == "2026-08-30T00:00:00+03:00"
 
 
 @pytest.mark.integration

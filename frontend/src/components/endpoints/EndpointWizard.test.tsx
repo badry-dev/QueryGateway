@@ -106,7 +106,7 @@ describe("EndpointWizard preview coordination", () => {
     expect(previewMock.mock.calls[0][0].params.customer_id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("blocks snapshot review when a parameter has no schedule-time default", async () => {
+  it("allows snapshot review when its schedule will own parameter values", async () => {
     renderWizard();
     await advanceToParameters();
 
@@ -121,7 +121,10 @@ describe("EndpointWizard preview coordination", () => {
     fireEvent.change(configSelectors[1], { target: { value: "snapshot" } });
     fireEvent.click(screen.getByRole("checkbox"));
 
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
-    expect(screen.getByText(/:customer_id/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+    expect(
+      screen.getByText(/Scheduled values are configured with the schedule/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/logical run date/i)).toBeInTheDocument();
   });
 });
