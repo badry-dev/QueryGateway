@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.models.endpoint import DataStrategy
 
@@ -160,7 +160,12 @@ def require_snapshot_defaults(
     """Reject snapshot endpoints whose binds require caller-supplied values."""
     if data_strategy != DataStrategy.snapshot:
         return
-    missing = missing_snapshot_defaults(param_schema)
+    try:
+        missing = missing_snapshot_defaults(param_schema)
+    except ValidationError as exc:
+        raise SnapshotConfigurationError(
+            "Snapshot endpoint has an invalid parameter schema."
+        ) from exc
     if missing:
         names = ", ".join(f":{name}" for name in missing)
         raise SnapshotConfigurationError(

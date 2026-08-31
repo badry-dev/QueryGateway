@@ -15,6 +15,7 @@ from app.schemas.endpoint import (
     EndpointResponse,
     EndpointUpdate,
     ParamDescriptor,
+    SnapshotConfigurationError,
     SqlPreviewRequest,
     extract_bind_params,
     require_snapshot_defaults,
@@ -156,7 +157,7 @@ def test_endpoint_update_rejects_incompatible_static_default() -> None:
 
 
 def test_snapshot_default_validation_rejects_incompatible_stored_default() -> None:
-    with pytest.raises(ValueError, match="Invalid default"):
+    with pytest.raises(SnapshotConfigurationError, match="invalid parameter schema"):
         require_snapshot_defaults(
             DataStrategy.snapshot,
             {"store_id": {"type": "integer", "required": True, "default": "abc"}},
@@ -539,6 +540,66 @@ async def test_update_live_endpoint_to_snapshot_requires_merged_defaults(
     )
     assert valid.status_code == 200
     assert valid.json()["param_schema"]["business_date"]["default_expression"] == "today"
+
+
+@pytest.mark.integration
+async def test_update_snapshot_with_invalid_stored_schema_returns_422(
+    async_client: object,
+    db_session: object,
+) -> None:
+    from app.models.endpoint import ApiEndpoint
+    from httpx import AsyncClient
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    session: AsyncSession = db_session  # type: ignore[assignment]
+    connection = await client.post(
+        "/api/v1/admin/connections/",
+        json={
+            "name": f"test-conn-invalid-schema-update-{uuid.uuid4().hex[:8]}",
+            "host": "oracle.example.com",
+            "service_name": "SVC",
+            "username": "scott",
+            "password": "tiger",
+        },
+    )
+    endpoint = await client.post(
+        "/api/v1/admin/endpoints/",
+        json={
+            "name": f"invalid-schema-update-{uuid.uuid4().hex[:8]}",
+            "path": f"invalid-schema-update-{uuid.uuid4().hex[:8]}",
+            "connection_id": connection.json()["id"],
+            "sql_text": "SELECT * FROM stores WHERE id = :store_id",
+            "param_schema": {
+                "store_id": {"type": "integer", "required": True, "default": 1}
+            },
+            "allow_unauthenticated": True,
+            "data_strategy": "snapshot",
+        },
+    )
+    assert endpoint.status_code == 201
+    endpoint_id = uuid.UUID(endpoint.json()["id"])
+
+    await session.execute(
+        update(ApiEndpoint)
+        .where(ApiEndpoint.id == endpoint_id)
+        .values(
+            param_schema_json={
+                "store_id": {"type": "integer", "required": True, "default": "abc"}
+            }
+        )
+    )
+    await session.commit()
+    session.expire_all()
+
+    response = await client.put(
+        f"/api/v1/admin/endpoints/{endpoint_id}",
+        json={"description": "still invalid"},
+    )
+
+    assert response.status_code == 422
+    assert "invalid parameter schema" in response.json()["detail"]
 
 
 @pytest.mark.integration

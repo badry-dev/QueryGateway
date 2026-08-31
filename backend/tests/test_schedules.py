@@ -239,6 +239,70 @@ async def test_create_schedule(async_client: object) -> None:
 
 
 @pytest.mark.integration
+async def test_create_schedule_with_invalid_stored_schema_returns_422(
+    async_client: object,
+    db_session: object,
+) -> None:
+    from app.models.endpoint import ApiEndpoint
+    from httpx import AsyncClient
+    from sqlalchemy import update
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    session: AsyncSession = db_session  # type: ignore[assignment]
+    connection = await client.post(
+        "/api/v1/admin/connections/",
+        json={
+            "name": f"test-conn-invalid-schema-schedule-{uuid.uuid4().hex[:8]}",
+            "host": "oracle.example.com",
+            "service_name": "SVC",
+            "username": "scott",
+            "password": "tiger",
+        },
+    )
+    endpoint = await client.post(
+        "/api/v1/admin/endpoints/",
+        json={
+            "name": f"invalid-schema-schedule-{uuid.uuid4().hex[:8]}",
+            "path": f"invalid-schema-schedule-{uuid.uuid4().hex[:8]}",
+            "connection_id": connection.json()["id"],
+            "sql_text": "SELECT * FROM stores WHERE id = :store_id",
+            "param_schema": {
+                "store_id": {"type": "integer", "required": True, "default": 1}
+            },
+            "allow_unauthenticated": True,
+            "data_strategy": "snapshot",
+        },
+    )
+    assert endpoint.status_code == 201
+    endpoint_id = uuid.UUID(endpoint.json()["id"])
+
+    await session.execute(
+        update(ApiEndpoint)
+        .where(ApiEndpoint.id == endpoint_id)
+        .values(
+            param_schema_json={
+                "store_id": {"type": "integer", "required": True, "default": "abc"}
+            }
+        )
+    )
+    await session.commit()
+    session.expire_all()
+
+    response = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": str(endpoint_id),
+            "schedule_type": "interval",
+            "interval_seconds": 60,
+        },
+    )
+
+    assert response.status_code == 422
+    assert "invalid parameter schema" in response.json()["detail"]
+
+
+@pytest.mark.integration
 async def test_create_duplicate_schedule_returns_409(async_client: object) -> None:
     from httpx import AsyncClient
 
