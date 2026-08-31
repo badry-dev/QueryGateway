@@ -31,6 +31,39 @@ Build and maintain a secure, testable monorepo for dynamic SQL-to-API exposure w
 - Parameter mapping source: validated request inputs -> typed schema -> bind dict.
 - Reject queries containing interpolated values from raw strings.
 - Execute user SQL through SQLAlchemy Core `text()` with bound params.
+- Bind markers inside single-quoted SQL literals are text, not parameters; never quote a bind
+  placeholder (use `column = :value`, not `column = ':value'`).
+
+## Parameter Ownership Contract
+
+- SQL preview values are temporary samples only; they are never persisted as endpoint or schedule
+  defaults.
+- Live and snapshot HTTP requests enforce every descriptor marked `required`, even when the
+  endpoint descriptor contains a default.
+- Optional live-request parameters may use a typed literal default, explicit SQL `NULL`, or the
+  supported dynamic date defaults `today` and `yesterday`.
+- Scheduled snapshot execution never reads endpoint defaults. Every SQL bind is owned by the
+  schedule through exactly one validated binding source: `literal`, `null`, `run_date`,
+  `relative_date`, `window_start`, or `window_end`.
+- Date inputs accept `YYYY-MM-DD` and `DD-MM-YYYY`. Schedule calendar math is evaluated from the
+  persisted nominal run time in the schedule's IANA timezone.
+
+## Snapshot Request Contract
+
+- Every parameterized snapshot endpoint must map every request parameter to a cached output
+  column and one operator: `eq`, `gte`, or `lte`.
+- Mappings target the final cached column name after `column_map` renaming. They filter rows; they
+  are not tenant authorization. Authentication remains mandatory and independent.
+- Select the newest retained snapshot whose persisted resolved schedule parameters cover the
+  request, then apply typed row filtering. Never return an unfiltered parameterized snapshot.
+- Missing/invalid required parameters, reversed ranges, incomplete mappings, unavailable mapped
+  columns, and out-of-coverage requests return explicit HTTP 422 responses. No retained snapshot
+  returns HTTP 503; an in-coverage request with no matching rows returns HTTP 200 with `data: []`.
+- `null_means_all` is valid only for an optional `eq` mapping and means a scheduled SQL `NULL`
+  covers every requested value for that parameter.
+- Snapshot mappings are stored in the existing endpoint parameter JSON and do not require a
+  relational migration. Schedule-owned bindings and logical-run audit fields are relational and
+  are covered by Alembic revision `e4a6c2d9f801`.
 
 ## Required Log Fields
 - `request_id`
@@ -52,6 +85,8 @@ Build and maintain a secure, testable monorepo for dynamic SQL-to-API exposure w
 - Run formatting/lint/tests for changed areas.
 - Add/update Alembic migration when schema changed.
 - Update docs when contracts, settings, or workflows changed.
+- Keep `README.md`, `docs/architecture.md`, `docs/scheduler_parameter_bindings.md`, and relevant
+  agent instructions aligned when parameter or snapshot behavior changes.
 - Verify no secrets/tokens/credentials are committed.
 
 ## Stop Conditions

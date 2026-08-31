@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { EndpointWizard } from "@/components/endpoints/EndpointWizard";
+import { SnapshotFilterMappings } from "@/components/endpoints/SnapshotFilterMappings";
 import { endpointsApi, getApiError, getPublicApiBaseUrl } from "@/lib/api";
 import { queryKeys } from "@/lib/queryClient";
 import type { Endpoint, EndpointUpdate } from "@/types/endpoint";
@@ -70,11 +71,18 @@ export function EndpointsPage() {
       is_active: ep.is_active,
       is_deprecated: ep.is_deprecated,
       deprecation_note: ep.deprecation_note ?? "",
+      param_schema: ep.param_schema,
     });
     setEditError("");
   };
 
   const baseUrl = getPublicApiBaseUrl();
+  const editParamSchema = editForm.param_schema ?? editEndpoint?.param_schema ?? {};
+  const editSnapshotMappingsOk =
+    editEndpoint?.data_strategy !== "snapshot" ||
+    Object.values(editParamSchema).every(
+      (descriptor) => !!descriptor.snapshot_filter?.column.trim(),
+    );
 
   if (showWizard) {
     return (
@@ -190,7 +198,12 @@ export function EndpointsPage() {
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(ep)}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Edit endpoint"
+                        onClick={() => openEdit(ep)}
+                      >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
                       <Button
@@ -215,7 +228,7 @@ export function EndpointsPage() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editEndpoint} onOpenChange={() => setEditEndpoint(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Endpoint</DialogTitle>
             <DialogDescription>
@@ -245,6 +258,14 @@ export function EndpointsPage() {
                 rows={2}
               />
             </div>
+            {editEndpoint?.data_strategy === "snapshot" && (
+              <SnapshotFilterMappings
+                paramSchema={editParamSchema}
+                onChange={(paramSchema) =>
+                  setEditForm((form) => ({ ...form, param_schema: paramSchema }))
+                }
+              />
+            )}
             <div className="flex items-center gap-4">
               <label className="flex items-center gap-2 text-sm">
                 <input
@@ -285,7 +306,7 @@ export function EndpointsPage() {
                   updateMutation.mutate({ id: editEndpoint.id, payload: editForm });
                 }
               }}
-              disabled={updateMutation.isPending}
+              disabled={updateMutation.isPending || !editSnapshotMappingsOk}
             >
               {updateMutation.isPending ? "Saving..." : "Save"}
             </Button>

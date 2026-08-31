@@ -146,7 +146,12 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
       // An endpoint without a dedicated method requires an explicit opt-in to
       // platform-admin Bearer authentication, mirroring the server-side 422.
       const authOk = !!state.auth_method_id || state.allow_unauthenticated;
-      return !!state.name.trim() && !!state.path.trim() && authOk;
+      const snapshotMappingsOk =
+        state.data_strategy !== "snapshot" ||
+        Object.values(state.param_schema).every(
+          (descriptor) => !!descriptor.snapshot_filter?.column.trim(),
+        );
+      return !!state.name.trim() && !!state.path.trim() && authOk && snapshotMappingsOk;
     }
     return true;
   };
@@ -218,7 +223,12 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
       )}
       {currentStep === "Parameters" && <ParamsStep state={state} onUpdateParam={updateParam} />}
       {currentStep === "Auth & Config" && (
-        <ConfigStep state={state} update={update} authMethods={authMethods} />
+        <ConfigStep
+          state={state}
+          update={update}
+          authMethods={authMethods}
+          previewColumns={preview?.columns ?? []}
+        />
       )}
       {currentStep === "Review" && (
         <ReviewStep state={state} connections={connections} authMethods={authMethods} />

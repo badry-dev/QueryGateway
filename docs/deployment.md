@@ -19,10 +19,13 @@ Create a `.env` file from `.env.example` and configure:
 |----------|----------|---------|-------------|
 | `DATABASE_URL` | Yes | — | PostgreSQL connection string (`postgresql+asyncpg://user:pass@host:5432/db`) |
 | `ENCRYPTION_KEY` | Yes | — | Fernet encryption key for credential storage (generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) |
+| `JWT_SECRET_KEY` | Yes | — | High-entropy platform JWT signing key with at least 32 characters |
+| `ADMIN_USERNAME` | Yes | — | Seeded platform administrator username |
+| `ADMIN_PASSWORD_HASH` | Yes | — | Seeded administrator bcrypt hash; generate with `app.auth.hashing.hash_password()` |
 | `APP_ENV` | No | `development` | Environment identifier (`development`, `staging`, `production`) |
 | `DEBUG` | No | `false` | Enable debug mode (never `true` in production) |
 | `LOG_LEVEL` | No | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `CORS_ORIGINS` | No | `*` | Comma-separated allowed CORS origins |
+| `CORS_ORIGINS` | No | `http://localhost:5173` | Comma-separated allowed CORS origins; wildcard is rejected |
 
 ### Generating an Encryption Key
 
@@ -38,7 +41,7 @@ Store this key securely. If the key is lost, all encrypted credentials (Oracle p
 
 ```bash
 # Clone the repository
-git clone <repo-url> && cd DB2API-Exposure
+git clone <repo-url> && cd QueryGateway
 
 # Configure environment
 cp .env.example .env
@@ -241,13 +244,24 @@ alembic downgrade -1
 
 ## Post-Deployment Verification
 
-1. **Health check**: `curl http://localhost:8000/api/v1/admin/health/live`
-2. **Database ready**: `curl http://localhost:8000/api/v1/admin/health/ready`
-3. **Admin UI**: Open `http://localhost:3000` in a browser
+1. **Health check**: use `curl http://localhost/api/v1/admin/health/live` for Docker, or
+   `curl http://localhost:8000/api/v1/admin/health/live` for a bare-metal backend.
+2. **Database ready**: use `curl http://localhost/api/v1/admin/health/ready` for Docker, or
+   `curl http://localhost:8000/api/v1/admin/health/ready` for bare metal.
+3. **Admin UI**: Open `http://localhost` for Docker, or `http://localhost:5173` for Vite development
 4. **Create first connection**: Use the Connections page to add an Oracle data source
 5. **Test connection**: Click "Test" to verify Oracle connectivity
 6. **Create first endpoint**: Use the API Endpoints page wizard
-7. **Verify data endpoint**: `curl -H "Authorization: Bearer <token>" http://localhost:8000/api/v1/data/<your-path>`
+7. **Verify data endpoint**: use
+   `curl -H "Authorization: Bearer <token>" "http://localhost/api/v1/data/<your-path>?required_param=value"`
+   for Docker, or change the origin to `http://localhost:8000` for bare metal.
+8. **Verify required inputs**: omit a required live and snapshot parameter and confirm HTTP 422
+9. **Verify snapshot selection**: preview and run the schedule, confirm an in-coverage request is
+   filtered, and confirm an out-of-coverage request returns `snapshot_out_of_coverage`
+10. **Verify scheduler restoration**: for Docker, run `docker compose restart api`; for bare metal,
+    restart the single API process with its process manager (for example,
+    `sudo systemctl restart querygateway-api`). Then confirm active jobs are registered again on
+    the health dashboard.
 
 ## Security Hardening for Production
 

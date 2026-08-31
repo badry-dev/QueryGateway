@@ -40,7 +40,7 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 22 | Template interpolation rejected (`${`, `{var}`) | Verified | Pattern included in safety validation |
 | 23 | SQL validation runs on both create and update | Verified | `EndpointCreate` and `EndpointUpdate` share the validator |
 | 24 | SQL preview also validates before execution | Verified | `SqlPreviewRequest` includes the same validator |
-| 25 | Parameters coerced through typed schemas before SQL execution | Verified | `_coerce_param()` with `ParamDescriptor` type validation |
+| 25 | Parameters coerced through typed schemas before SQL execution | Verified | `build_param_model()` creates the Pydantic request model; `DataService` enforces required fields before binding |
 | 26 | SQLAlchemy `text()` with bind dict used for execution | Verified | `sql/executor.py` uses parameterized execution |
 
 ## Input Validation
@@ -61,7 +61,7 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 33 | 500 errors return generic message, not stack traces | Verified | `unhandled_exception_handler` returns `{"detail": "Internal server error"}` |
 | 34 | Validation errors do not leak internal schema details | Verified | Pydantic errors are structured but safe |
 | 35 | Oracle connection strings not exposed in error responses | Verified | SQL execution errors logged server-side; generic message returned |
-| 36 | Access logs record all data endpoint requests | Verified | `_write_access_log()` called on every code path in data router |
+| 36 | Access logs record all data endpoint requests | Verified | The data router wraps `DataService.serve()` in the access-log context manager for success and failure paths |
 | 37 | Access logs include: path, method, principal, IP, status, duration, request_id | Verified | `AccessLog` model captures all audit fields |
 
 ## Transport Security
@@ -116,10 +116,21 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 63 | Branch protection with required, non-bypassable checks | Action Required | Repo-admin only — settings documented in [repository_governance.md](repository_governance.md) |
 | 64 | Container image signing + provenance | Action Required | Images scanned + SBOM'd, not yet signed (cosign/Sigstore) |
 
+## Snapshot Parameter and Data Isolation
+
+| # | Check | Status | Notes |
+|---|-------|--------|-------|
+| 65 | Required endpoint parameters are enforced for live and snapshot HTTP requests | Verified | `DataService._coerce_params()` uses `build_param_model(..., enforce_required=True)`; endpoint defaults cannot weaken required fields |
+| 66 | Scheduled queries never inherit endpoint request defaults | Verified | Schedule creation requires exactly one validated binding per SQL parameter; execution resolves only `parameter_bindings_json` |
+| 67 | Every parameterized snapshot request has an allowlisted cached-column mapping | Verified | Endpoint create/update requires a post-rename column plus `eq`, `gte`, or `lte` for every parameter |
+| 68 | Cached data is served only after retained-run coverage and typed row filtering | Verified | `DataService._serve_snapshot()` selects the newest covering job run, validates mapped columns, and calls `filter_snapshot_rows()`; no unfiltered fallback exists |
+| 69 | Range and SQL `NULL` coverage semantics fail closed | Verified | Reversed bounds return 422; range types must match; `null_means_all` is limited to optional equality mappings |
+| 70 | Snapshot filter mappings cannot substitute for authorization | Verified | Data authentication runs before snapshot selection; `store_id` and other mapped values are ordinary row filters only |
+
 ## Summary
 
-- **Verified items**: 58/64
-- **Action required**: 6/64
+- **Verified items**: 64/70
+- **Action required**: 6/70
 - **High-severity unresolved findings**: 0
 - **All code-level security controls validated through automated tests**
 

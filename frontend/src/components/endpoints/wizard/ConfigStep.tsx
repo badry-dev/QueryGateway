@@ -6,15 +6,18 @@ import { Textarea } from "@/components/ui/textarea";
 import type { AuthMethod } from "@/types/auth_method";
 import type { DataStrategy } from "@/types/endpoint";
 
+import { SnapshotFilterMappings } from "../SnapshotFilterMappings";
+
 import type { WizardState, WizardUpdate } from "./types";
 
 interface ConfigStepProps {
   state: WizardState;
   update: WizardUpdate;
   authMethods: AuthMethod[];
+  previewColumns?: string[];
 }
 
-export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
+export function ConfigStep({ state, update, authMethods, previewColumns = [] }: ConfigStepProps) {
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-semibold">Endpoint Configuration</h3>
@@ -92,13 +95,21 @@ export function ConfigStep({ state, update, authMethods }: ConfigStepProps) {
       </div>
 
       {state.data_strategy === "snapshot" && (
-        <Alert>
-          <AlertTitle>Scheduled values are configured with the schedule</AlertTitle>
-          <AlertDescription>
-            After publishing this endpoint, create its schedule and choose a fixed value, SQL NULL,
-            logical run date, relative date, or calendar window for every SQL parameter.
-          </AlertDescription>
-        </Alert>
+        <>
+          <Alert>
+            <AlertTitle>Scheduled values are configured with the schedule</AlertTitle>
+            <AlertDescription>
+              After publishing this endpoint, create its schedule and choose a fixed value, SQL
+              NULL, logical run date, relative date, or calendar window for every SQL parameter.
+            </AlertDescription>
+          </Alert>
+
+          <SnapshotFilterMappings
+            paramSchema={state.param_schema}
+            previewColumns={previewColumns}
+            onChange={(paramSchema) => update({ param_schema: paramSchema })}
+          />
+        </>
       )}
 
       {!state.auth_method_id && (

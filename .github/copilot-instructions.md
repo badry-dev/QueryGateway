@@ -19,7 +19,7 @@ These instructions apply repository-wide. Prefer local instructions under `.gith
 - Use PyJWT + bcrypt for auth.
 - Use structlog structured logging.
 - Use Vite + React SPA for frontend.
-- Include rich SQL editor in wizard flows (Monaco or CodeMirror 6).
+- Preserve the existing CodeMirror 6 SQL editor in endpoint wizard flows.
 
 ## Build and Test Commands
 - Backend setup: `cd backend && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt`.
@@ -33,6 +33,13 @@ These instructions apply repository-wide. Prefer local instructions under `.gith
 ## Mandatory Safety Rules
 - SQL must be parameterized with bind params only (`:param_name`).
 - Never generate SQL using string concatenation from user input.
+- Treat bind markers inside single-quoted SQL literals as text, not parameters.
+- Enforce required parameters for both live and snapshot HTTP requests, even when endpoint
+  defaults exist.
+- Keep scheduler bindings independent from endpoint request defaults. Every scheduled bind must
+  use a validated declarative schedule source.
+- Never serve a parameterized snapshot without complete cached-column mappings, coverage
+  validation, and typed row filtering. Snapshot filters do not provide tenant authorization.
 - Never store secrets in code, tests, fixtures, or docs.
 - Never break existing `/api/v1/*` contracts without version bump + migration notes.
 - Never change an applied Alembic revision; add a new revision.
@@ -43,6 +50,8 @@ These instructions apply repository-wide. Prefer local instructions under `.gith
 - Include docs updates for API/config/workflow changes.
 - Keep changes minimal and scoped to request.
 - Explain risks when touching auth, SQL execution, migrations, or scheduler logic.
+- Update `docs/scheduler_parameter_bindings.md` whenever the endpoint, schedule, or snapshot
+  parameter contract changes.
 
 ## Stop Conditions
 - If API contract is unclear, inspect existing `/api/v1` routers and docs.

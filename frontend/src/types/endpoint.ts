@@ -2,6 +2,13 @@
 
 export type DataStrategy = "live" | "snapshot";
 export type DateDefaultExpression = "today" | "yesterday";
+export type SnapshotFilterOperator = "eq" | "gte" | "lte";
+
+export interface SnapshotFilter {
+  column: string;
+  operator: SnapshotFilterOperator;
+  null_means_all?: boolean;
+}
 
 export interface ParamDescriptor {
   type: "string" | "integer" | "float" | "date" | "boolean";
@@ -10,6 +17,7 @@ export interface ParamDescriptor {
   default_is_null?: boolean;
   default_expression?: DateDefaultExpression | null;
   description?: string;
+  snapshot_filter?: SnapshotFilter | null;
 }
 
 export interface Endpoint {

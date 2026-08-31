@@ -1,5 +1,11 @@
 # QueryGateway Phased Refactor Plan
 
+> **Historical implementation plan.** The refactor described here has been superseded by the
+> current repository structure. Use [Architecture](architecture.md),
+> [Implementation progress](progress.md), and [Endpoint, scheduler, and snapshot parameter
+> contracts](scheduler_parameter_bindings.md) as the current source of truth. Line numbers and
+> pre-refactor helper names below are retained only as execution history.
+
 ## Context
 
 A code-health audit of the QueryGateway monorepo (FastAPI + React, Oracle query gateway) scored **66/100**. Findings include one critical security gap — `/api/v1/admin/*` is fully unauthenticated, with no User model, login endpoint, dependency, or middleware — plus architecture leakage (`routers/data.py` bypasses the service layer), per-request Oracle client init, hand-rolled param coercion, ~6 near-identical repositories and routers, monolithic frontend pages (350-450 LOC), no frontend login UI, and 1 frontend test for 4,173 LOC. Existing utilities (JWT helpers, bcrypt helpers, ServiceContext patterns, FastAPI lifespan) are reusable and should be the foundation.

@@ -154,6 +154,8 @@ Logs are emitted as structured JSON via structlog. Key fields:
 | `endpoint` | API path |
 | `status` | HTTP status code |
 | `duration_ms` | Request duration |
+| `method` | HTTP method |
+| `client_ip` | Request source after trusted-proxy resolution |
 | `job_id` | Scheduler job identifier |
 | `run_id` | Job run identifier |
 | `row_count` | Query result row count |
@@ -178,7 +180,8 @@ cat app.log | jq 'select(.status == 401)'
 
 ### Service Won't Start
 
-1. **Check environment variables**: Ensure `DATABASE_URL` and `ENCRYPTION_KEY` are set
+1. **Check environment variables**: Ensure `DATABASE_URL`, `ENCRYPTION_KEY`, and
+   `JWT_SECRET_KEY` are set and valid
 2. **Check PostgreSQL**: `pg_isready -h localhost`
 3. **Check migrations**: `alembic current` should show the latest revision
 4. **Check logs**: Look for startup errors in container logs
@@ -218,6 +221,12 @@ docker compose logs api --tail 50
    - Oracle connection timeout
    - Large result set exceeding memory
    - Concurrent job limit reached
+   - A missing or extra schedule parameter binding
+   - A date window source without a configured window preset
+   - An invalid IANA timezone or a logical-date replay outside the intended business calendar
+
+Use `POST /api/v1/admin/schedules/preview` with the proposed timing and binding payload to inspect
+the next resolved logical dates and typed SQL values before saving a schedule.
 
 ### Auth Token Issues
 
@@ -229,10 +238,39 @@ docker compose logs api --tail 50
 ### Data Endpoint Returns Unexpected Results
 
 1. **Check endpoint config**: `GET /api/v1/admin/endpoints/{id}`
-2. **Verify parameters**: Required params must be provided in query string
-3. **Check column mapping**: `column_map_json` may rename output columns
-4. **Snapshot staleness**: For snapshot endpoints, check the `snapshot_created_at` in response
-5. **SQL syntax**: Use the SQL preview feature to test queries interactively
+2. **Verify parameters**: Required parameters must be present in the query string for both live
+   and snapshot requests. Endpoint defaults do not satisfy a missing required HTTP value.
+3. **Check parameter ownership**: Preview samples are temporary, live defaults apply only to
+   omitted optional requests, and schedule execution uses the schedule's own bindings.
+4. **Check snapshot mappings and error codes**:
+   - Snapshot endpoints require a cached-column mapping for every request parameter.
+   - The mapped name is the final output name after `column_map_json` renaming.
+   - `snapshot_filter_not_configured` means an older endpoint must be updated in the endpoint edit
+     dialog or admin API.
+   - `invalid_parameter_range` means a lower request bound is later than its upper bound.
+   - `snapshot_out_of_coverage` means no retained job run covers the complete request; inspect
+     schedule bindings, window, timezone, and snapshot retention.
+   - `snapshot_filter_column_unavailable` means a configured mapped column is absent from the
+     non-empty cached payload.
+   - A covered request with no matching business rows is successful and returns `data: []`.
+   - No retained snapshot returns HTTP 503 rather than a coverage error.
+5. **Check snapshot staleness**: For snapshot endpoints, compare `snapshot_created_at`,
+   `snapshot_row_count`, and the filtered `row_count` response metadata.
+6. **Check SQL syntax**: Use the SQL preview feature with temporary sample values. Ensure bind
+   placeholders are not enclosed in single quotes.
+
+See [Endpoint, scheduler, and snapshot parameter contracts](scheduler_parameter_bindings.md) for
+the complete selection and coverage rules.
+
+### Schedule and Endpoint Deletion
+
+- Deleting a schedule unregisters the in-memory job after the database commit and preserves its
+  immutable job-run history. Historical `schedule_id` values become `NULL`; retained snapshots
+  continue to reference their job runs.
+- Deleting an endpoint cascades its active schedule and cached snapshots, unregisters the schedule
+  job, and preserves historical job runs with nullable endpoint/schedule references.
+- Back up PostgreSQL before bulk deletion when job-run audit history or cached payloads are part of
+  an operational retention requirement.
 
 ## Upgrade Procedures
 

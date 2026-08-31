@@ -137,9 +137,7 @@ def test_endpoint_create_rejects_incompatible_static_default() -> None:
             path="invalid-default",
             connection_id=uuid.uuid4(),
             sql_text="SELECT * FROM stores WHERE id = :store_id",
-            param_schema={
-                "store_id": {"type": "integer", "required": True, "default": "abc"}
-            },
+            param_schema={"store_id": {"type": "integer", "required": True, "default": "abc"}},
             allow_unauthenticated=True,
         )
 
@@ -147,9 +145,7 @@ def test_endpoint_create_rejects_incompatible_static_default() -> None:
 def test_endpoint_update_rejects_incompatible_static_default() -> None:
     with pytest.raises(ValueError, match="Invalid default"):
         EndpointUpdate(
-            param_schema={
-                "store_id": {"type": "integer", "required": True, "default": "abc"}
-            }
+            param_schema={"store_id": {"type": "integer", "required": True, "default": "abc"}}
         )
 
 
@@ -160,8 +156,16 @@ def test_snapshot_endpoint_allows_schedule_to_own_parameter_values() -> None:
         connection_id=uuid.uuid4(),
         sql_text=("SELECT * FROM orders WHERE business_date BETWEEN :start_date AND :end_date"),
         param_schema={
-            "start_date": {"type": "date", "required": True},
-            "end_date": {"type": "date", "required": True},
+            "start_date": {
+                "type": "date",
+                "required": True,
+                "snapshot_filter": {"column": "business_date", "operator": "gte"},
+            },
+            "end_date": {
+                "type": "date",
+                "required": True,
+                "snapshot_filter": {"column": "business_date", "operator": "lte"},
+            },
         },
         allow_unauthenticated=True,
         data_strategy="snapshot",
@@ -182,11 +186,13 @@ def test_snapshot_endpoint_accepts_dynamic_defaults() -> None:
                 "type": "date",
                 "required": True,
                 "default_expression": "yesterday",
+                "snapshot_filter": {"column": "business_date", "operator": "gte"},
             },
             "end_date": {
                 "type": "date",
                 "required": True,
                 "default_expression": "today",
+                "snapshot_filter": {"column": "business_date", "operator": "lte"},
             },
         },
         allow_unauthenticated=True,
@@ -206,6 +212,11 @@ def test_snapshot_endpoint_accepts_explicit_null_default() -> None:
                 "type": "string",
                 "required": False,
                 "default_is_null": True,
+                "snapshot_filter": {
+                    "column": "id",
+                    "operator": "eq",
+                    "null_means_all": True,
+                },
             }
         },
         allow_unauthenticated=True,
@@ -502,7 +513,16 @@ async def test_update_live_endpoint_to_snapshot_leaves_values_to_schedule(
             "path": f"snapshot-update-{uuid.uuid4().hex[:8]}",
             "connection_id": connection.json()["id"],
             "sql_text": "SELECT * FROM orders WHERE business_date = :business_date",
-            "param_schema": {"business_date": {"type": "date", "required": True}},
+            "param_schema": {
+                "business_date": {
+                    "type": "date",
+                    "required": True,
+                    "snapshot_filter": {
+                        "column": "business_date",
+                        "operator": "eq",
+                    },
+                }
+            },
             "allow_unauthenticated": True,
             "data_strategy": "live",
         },
@@ -548,7 +568,12 @@ async def test_update_snapshot_with_invalid_stored_schema_returns_422(
             "connection_id": connection.json()["id"],
             "sql_text": "SELECT * FROM stores WHERE id = :store_id",
             "param_schema": {
-                "store_id": {"type": "integer", "required": True, "default": 1}
+                "store_id": {
+                    "type": "integer",
+                    "required": True,
+                    "default": 1,
+                    "snapshot_filter": {"column": "id", "operator": "eq"},
+                }
             },
             "allow_unauthenticated": True,
             "data_strategy": "snapshot",
@@ -561,9 +586,7 @@ async def test_update_snapshot_with_invalid_stored_schema_returns_422(
         update(ApiEndpoint)
         .where(ApiEndpoint.id == endpoint_id)
         .values(
-            param_schema_json={
-                "store_id": {"type": "integer", "required": True, "default": "abc"}
-            }
+            param_schema_json={"store_id": {"type": "integer", "required": True, "default": "abc"}}
         )
     )
     await session.flush()

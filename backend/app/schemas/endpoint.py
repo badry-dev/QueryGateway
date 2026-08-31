@@ -1,7 +1,7 @@
 """Pydantic schemas for API endpoint management (Phase 4).
 
 Public contract rules:
-- ``sql_text`` must use named bind parameters (``:`param_name``).
+- ``sql_text`` must use named bind parameters (``:param_name``).
 - ``path`` must be a valid URL segment (no leading slash, no whitespace).
 - ``param_schema_json`` maps parameter names to type/required/default descriptors.
 - ``column_map_json`` maps source column names to output names (optional).
@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.models.endpoint import DataStrategy
 
@@ -68,6 +68,34 @@ def validate_sql_safety(sql: str) -> list[str]:
     return errors
 
 
+class SnapshotFilter(BaseModel):
+    """Explicit mapping from one request parameter to one cached output column."""
+
+    column: str = Field(..., min_length=1, max_length=255)
+    operator: Literal["eq", "gte", "lte"]
+    null_means_all: bool = Field(
+        False,
+        description=(
+            "For equality filters only, a scheduled SQL NULL means the snapshot covers all "
+            "values for this parameter."
+        ),
+    )
+
+    @field_validator("column")
+    @classmethod
+    def normalize_column(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Snapshot filter column cannot be blank.")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_null_coverage(self) -> Self:
+        if self.null_means_all and self.operator != "eq":
+            raise ValueError("null_means_all is supported only for the eq operator.")
+        return self
+
+
 class ParamDescriptor(BaseModel):
     """Schema for a single bind parameter."""
 
@@ -98,9 +126,17 @@ class ParamDescriptor(BaseModel):
         ge=1,
         description="Maximum allowed length for string parameters.",
     )
+    snapshot_filter: SnapshotFilter | None = Field(
+        None,
+        description=(
+            "Required for snapshot endpoints. Maps the request value to a cached output column."
+        ),
+    )
 
     @model_validator(mode="after")
     def optional_must_have_default(self) -> Self:
+        if self.snapshot_filter and self.snapshot_filter.null_means_all and self.required:
+            raise ValueError("null_means_all is supported only for optional parameters.")
         configured_defaults = sum(
             (
                 self.default is not None,
@@ -121,10 +157,56 @@ class ParamDescriptor(BaseModel):
                 model = build_param_model({"value": self.model_dump()})
                 model.model_validate({})
             except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Invalid default for parameter type '{self.type}'."
-                ) from exc
+                raise ValueError(f"Invalid default for parameter type '{self.type}'.") from exc
         return self
+
+
+def require_snapshot_filter_mappings(
+    data_strategy: DataStrategy,
+    param_schema: dict[str, ParamDescriptor] | dict[str, object],
+) -> None:
+    """Require complete mappings and compatible paired range-filter types."""
+    if data_strategy != DataStrategy.snapshot or not param_schema:
+        return
+
+    missing: list[str] = []
+    parsed_descriptors: dict[str, ParamDescriptor] = {}
+    for name, descriptor in param_schema.items():
+        try:
+            parsed = (
+                descriptor
+                if isinstance(descriptor, ParamDescriptor)
+                else ParamDescriptor.model_validate(descriptor)
+            )
+        except ValidationError as exc:
+            raise SnapshotConfigurationError("Endpoint has an invalid parameter schema.") from exc
+        parsed_descriptors[name] = parsed
+        if parsed.snapshot_filter is None:
+            missing.append(name)
+
+    if missing:
+        names = ", ".join(f":{name}" for name in sorted(missing))
+        raise SnapshotConfigurationError(
+            f"Snapshot endpoints require explicit snapshot filter mappings for: {names}."
+        )
+
+    range_types: dict[str, dict[str, set[str]]] = {}
+    for descriptor in parsed_descriptors.values():
+        mapping = descriptor.snapshot_filter
+        if mapping is None or mapping.operator not in {"gte", "lte"}:
+            continue
+        range_types.setdefault(mapping.column, {}).setdefault(mapping.operator, set()).add(
+            descriptor.type
+        )
+
+    for column, bounds in range_types.items():
+        if "gte" not in bounds or "lte" not in bounds:
+            continue
+        if len(bounds["gte"] | bounds["lte"]) > 1:
+            raise SnapshotConfigurationError(
+                "Snapshot lower and upper bounds for "
+                f"'{column}' must use the same declared parameter type."
+            )
 
 
 class EndpointCreate(BaseModel):
@@ -197,6 +279,7 @@ class EndpointCreate(BaseModel):
             raise ValueError(f"SQL references params not declared in schema: {sorted(undeclared)}")
         if unused:
             raise ValueError(f"Schema declares params not referenced in SQL: {sorted(unused)}")
+        require_snapshot_filter_mappings(self.data_strategy, self.param_schema)
         return self
 
 

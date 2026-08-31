@@ -36,8 +36,17 @@ from app.models.endpoint import ApiEndpoint
 from app.repositories.auth_method import AuthMethodRepository
 from app.repositories.connection import ConnectionRepository
 from app.repositories.endpoint import EndpointRepository
+from app.repositories.job_run import JobRunRepository
 from app.repositories.snapshot import SnapshotRepository
+from app.schemas.endpoint import SnapshotConfigurationError, require_snapshot_filter_mappings
 from app.services.auth_method import AuthMethodService
+from app.services.snapshot_filtering import (
+    compile_snapshot_filters,
+    filter_snapshot_rows,
+    snapshot_covers_request,
+    unavailable_snapshot_filter_columns,
+    validate_snapshot_parameter_ranges,
+)
 from app.sql.executor import SqlExecutionError, execute_query
 from app.sql.param_models import build_param_model
 
@@ -122,7 +131,13 @@ class DataService:
             principal = await self._enforce_platform_auth(request, endpoint, started_at, path)
 
         if endpoint.data_strategy.value == "snapshot":
-            response = await self._serve_snapshot(endpoint, path, principal)
+            response = await self._serve_snapshot(
+                endpoint,
+                request,
+                path,
+                principal,
+                started_at,
+            )
         else:
             response = await self._serve_live(endpoint, request, path, principal)
 
@@ -189,9 +204,7 @@ class DataService:
 
     # ── Auth (per-endpoint) ─────────────────────────────────────────────────
 
-    async def _enforce_auth(
-        self, request: Request, auth_method_id: uuid.UUID
-    ) -> str:
+    async def _enforce_auth(self, request: Request, auth_method_id: uuid.UUID) -> str:
         svc = AuthMethodService(AuthMethodRepository(self._db))
         auth_method = await svc.get_auth_method(auth_method_id)
         if auth_method is None or not auth_method.is_active:
@@ -270,27 +283,143 @@ class DataService:
     # ── Snapshot mode ───────────────────────────────────────────────────────
 
     async def _serve_snapshot(
-        self, endpoint: ApiEndpoint, path: str, principal: str | None
+        self,
+        endpoint: ApiEndpoint,
+        request: Request,
+        path: str,
+        principal: str | None,
+        started_at: float,
     ) -> JSONResponse:
-        snapshot = await SnapshotRepository(self._db).get_latest_by_endpoint(endpoint.id)
-        if snapshot is None:
+        try:
+            params = self._coerce_params(endpoint, request)
+        except ValidationError as exc:
+            return self._parameter_validation_response(exc)
+
+        param_schema = endpoint.param_schema_json or {}
+        try:
+            require_snapshot_filter_mappings(endpoint.data_strategy, param_schema)
+        except SnapshotConfigurationError:
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="snapshot_filter_not_configured",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "code": "snapshot_filter_not_configured",
+                    "detail": ("Snapshot request filtering is not configured for every parameter."),
+                },
+            )
+        filters = compile_snapshot_filters(param_schema)
+        try:
+            validate_snapshot_parameter_ranges(
+                filters=filters,
+                request_params=params,
+            )
+        except ValueError:
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="invalid_snapshot_parameter_range",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "code": "invalid_parameter_range",
+                    "detail": "Snapshot filter lower bound must not exceed its upper bound.",
+                },
+            )
+
+        snapshots = await SnapshotRepository(self._db).get_by_endpoint(endpoint.id, limit=100)
+        if not snapshots:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"detail": "No snapshot available yet. Wait for the scheduled job to run."},
+            )
+
+        snapshot = None
+        if not param_schema:
+            snapshot = snapshots[0]
+        else:
+            candidate_run_ids = list(
+                dict.fromkeys(
+                    candidate.job_run_id
+                    for candidate in snapshots
+                    if candidate.job_run_id is not None
+                )
+            )
+            job_runs = await JobRunRepository(self._db).get_by_ids(candidate_run_ids)
+            job_runs_by_id = {job_run.id: job_run for job_run in job_runs}
+            for candidate in snapshots:
+                if candidate.job_run_id is None:
+                    continue
+                job_run = job_runs_by_id.get(candidate.job_run_id)
+                if job_run is not None and snapshot_covers_request(
+                    filters=filters,
+                    request_params=params,
+                    resolved_params=job_run.resolved_params_json or {},
+                ):
+                    snapshot = candidate
+                    break
+
+        if snapshot is None:
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="snapshot_out_of_coverage",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 content={
-                    "detail": "No snapshot available yet. "
-                    "Wait for the scheduled job to run."
+                    "code": "snapshot_out_of_coverage",
+                    "detail": "Requested parameters are outside retained snapshot coverage.",
                 },
             )
 
         snapshot_data: list[dict[str, object]] = (
             snapshot.data if isinstance(snapshot.data, list) else []
         )
+        if unavailable_snapshot_filter_columns(
+            rows=snapshot_data,
+            filters=filters,
+        ):
+            self._log_snapshot_rejection(
+                request=request,
+                endpoint=endpoint,
+                path=path,
+                principal=principal,
+                started_at=started_at,
+                event="snapshot_filter_column_unavailable",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "code": "snapshot_filter_column_unavailable",
+                    "detail": "A configured snapshot filter column is unavailable.",
+                },
+            )
+        filtered_data = filter_snapshot_rows(
+            rows=snapshot_data,
+            filters=filters,
+            request_params=params,
+        )
         return JSONResponse(
             status_code=200,
             content={
-                "data": snapshot_data,
+                "data": filtered_data,
                 "meta": {
-                    "row_count": snapshot.row_count,
+                    "row_count": len(filtered_data),
+                    "snapshot_row_count": snapshot.row_count,
                     "endpoint": path,
                     "version": endpoint.version,
                     "data_strategy": "snapshot",
@@ -298,6 +427,29 @@ class DataService:
                 },
             },
             headers=_deprecation_headers(endpoint),
+        )
+
+    @staticmethod
+    def _log_snapshot_rejection(
+        *,
+        request: Request,
+        endpoint: ApiEndpoint,
+        path: str,
+        principal: str | None,
+        started_at: float,
+        event: str,
+    ) -> None:
+        """Emit the required request context before a snapshot HTTP 422 response."""
+        log.warning(
+            event,
+            request_id=resolve_request_id(request),
+            user=principal or "anonymous",
+            endpoint=path,
+            endpoint_id=str(endpoint.id),
+            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
+            method=request.method,
+            client_ip=request.client.host if request.client else None,
         )
 
     # ── Live mode ───────────────────────────────────────────────────────────
@@ -312,17 +464,7 @@ class DataService:
         try:
             params = self._coerce_params(endpoint, request)
         except ValidationError as exc:
-            # Pull the first field error so the message stays readable.
-            first = exc.errors()[0]
-            field = ".".join(str(part) for part in first.get("loc", ())) or "?"
-            return JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                content={
-                    "detail": (
-                        f"Invalid value for parameter '{field}': {first.get('msg')}"
-                    )
-                },
-            )
+            return self._parameter_validation_response(exc)
 
         connection = await ConnectionRepository(self._db).get_by_id(endpoint.connection_id)
         if connection is None or not connection.is_active:
@@ -378,12 +520,22 @@ class DataService:
         )
 
     @staticmethod
+    def _parameter_validation_response(exc: ValidationError) -> JSONResponse:
+        """Return a stable public error for typed query-parameter failures."""
+        first = exc.errors()[0]
+        field = ".".join(str(part) for part in first.get("loc", ())) or "?"
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": f"Invalid value for parameter '{field}': {first.get('msg')}"},
+        )
+
+    @staticmethod
     def _coerce_params(endpoint: ApiEndpoint, request: Request) -> dict[str, Any]:
         param_schema = endpoint.param_schema_json or {}
-        # Scheduler defaults make snapshot refreshes autonomous, but they do
-        # not make required HTTP query parameters optional. Live callers must
-        # supply every descriptor marked required; configured defaults remain
-        # available to the scheduler and to omitted optional request fields.
+        # Schedule-owned bindings make snapshot refreshes autonomous, but they
+        # do not make required HTTP query parameters optional. Live and
+        # snapshot callers must supply every descriptor marked required;
+        # endpoint defaults apply only to omitted optional request fields.
         Model = build_param_model(param_schema, enforce_required=True)
         # Pull only declared params from the query string; ignore unknowns
         # so the legacy loop's behavior is preserved. Filter on
