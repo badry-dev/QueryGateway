@@ -28,6 +28,7 @@
 - Prefer least-privilege Oracle credentials for query execution.
 
 ## Logging and Privacy
+
 - Use structured logs with minimal necessary PII.
 - Required fields: `request_id`, `user`, `endpoint`, `status`, `duration_ms`, `method`,
   `client_ip`, `event`.

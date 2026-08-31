@@ -23,6 +23,7 @@
 - Alembic migration upgrade/downgrade sanity.
 
 ## Frontend Test Focus
+
 - Wizard step transitions and validation.
 - SQL editor integration behavior and parameter UX.
 - Separation of preview samples, endpoint defaults, schedule bindings, and snapshot filter

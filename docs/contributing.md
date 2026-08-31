@@ -50,7 +50,16 @@ npm install
 ```sh
 # Copy root env example
 cp .env.example .env
-# Edit .env to set JWT_SECRET_KEY and ENCRYPTION_KEY
+
+# Generate the required secrets (run with the backend environment activated)
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+cd backend
+python -c "from app.auth.hashing import hash_password; print(hash_password('your-password'))"
+cd ..
+
+# Edit .env to set JWT_SECRET_KEY, ENCRYPTION_KEY, ADMIN_USERNAME, and
+# ADMIN_PASSWORD_HASH. Paste the generated bcrypt hash; never store plaintext.
 
 docker compose up -d --build
 ```

@@ -35,6 +35,7 @@ Build and maintain a secure, testable monorepo for dynamic SQL-to-API exposure w
   placeholder (use `column = :value`, not `column = ':value'`).
 
 ## Parameter Ownership Contract
+
 - SQL preview values are temporary samples only; they are never persisted as endpoint or schedule
   defaults.
 - Live and snapshot HTTP requests enforce every descriptor marked `required`, even when the
@@ -48,6 +49,7 @@ Build and maintain a secure, testable monorepo for dynamic SQL-to-API exposure w
   persisted nominal run time in the schedule's IANA timezone.
 
 ## Snapshot Request Contract
+
 - Every parameterized snapshot endpoint must map every request parameter to a cached output
   column and one operator: `eq`, `gte`, or `lte`.
 - Mappings target the final cached column name after `column_map` renaming. They filter rows; they

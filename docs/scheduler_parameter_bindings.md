@@ -155,7 +155,11 @@ DATE/TIMESTAMP ISO strings are normalized to dates before comparison. Behavior i
 
 - Missing or invalid required parameters return HTTP 422 with the field in `detail`.
 - Lower and upper mappings for the same cached column must declare the same parameter type.
-- A lower bound greater than its upper bound returns HTTP 422 with `code=invalid_parameter_range`.
+- When multiple parameters provide bounds for the same cached column, validation retains every
+  value and uses `max(gte)` as the effective lower bound and `min(lte)` as the effective upper
+  bound. If the effective lower bound is greater, the request returns HTTP 422 with
+  `code=invalid_parameter_range`. For example, two `gte` values of `5` and `10` plus an `lte`
+  value of `7` resolve to the invalid effective range `10..7`.
 - A valid request outside all retained coverage returns HTTP 422 with `code=snapshot_out_of_coverage`.
 - A request inside coverage with no matching business rows returns HTTP 200 with `data: []`.
 - An endpoint created before this contract without complete mappings returns HTTP 422 with `code=snapshot_filter_not_configured`; add mappings through the endpoint edit dialog or admin update API.

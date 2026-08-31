@@ -244,19 +244,24 @@ alembic downgrade -1
 
 ## Post-Deployment Verification
 
-1. **Health check**: `curl http://localhost/api/v1/admin/health/live` (Docker) or use port
-   `8000` for a bare-metal backend
-2. **Database ready**: `curl http://localhost/api/v1/admin/health/ready`
+1. **Health check**: use `curl http://localhost/api/v1/admin/health/live` for Docker, or
+   `curl http://localhost:8000/api/v1/admin/health/live` for a bare-metal backend.
+2. **Database ready**: use `curl http://localhost/api/v1/admin/health/ready` for Docker, or
+   `curl http://localhost:8000/api/v1/admin/health/ready` for bare metal.
 3. **Admin UI**: Open `http://localhost` for Docker, or `http://localhost:5173` for Vite development
 4. **Create first connection**: Use the Connections page to add an Oracle data source
 5. **Test connection**: Click "Test" to verify Oracle connectivity
 6. **Create first endpoint**: Use the API Endpoints page wizard
-7. **Verify data endpoint**: `curl -H "Authorization: Bearer <token>" "http://localhost/api/v1/data/<your-path>?required_param=value"`
+7. **Verify data endpoint**: use
+   `curl -H "Authorization: Bearer <token>" "http://localhost/api/v1/data/<your-path>?required_param=value"`
+   for Docker, or change the origin to `http://localhost:8000` for bare metal.
 8. **Verify required inputs**: omit a required live and snapshot parameter and confirm HTTP 422
 9. **Verify snapshot selection**: preview and run the schedule, confirm an in-coverage request is
    filtered, and confirm an out-of-coverage request returns `snapshot_out_of_coverage`
-10. **Verify scheduler restoration**: restart the single API container and confirm active jobs are
-    registered again on the health dashboard
+10. **Verify scheduler restoration**: for Docker, run `docker compose restart api`; for bare metal,
+    restart the single API process with its process manager (for example,
+    `sudo systemctl restart querygateway-api`). Then confirm active jobs are registered again on
+    the health dashboard.
 
 ## Security Hardening for Production
 

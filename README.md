@@ -112,7 +112,7 @@ make setup
 make check
 
 # Start with Docker
-cp .env.example .env   # Set JWT_SECRET_KEY and ENCRYPTION_KEY (see deployment.md for generation commands)
+cp .env.example .env   # Set all required secrets and admin credentials (see deployment.md)
 make docker-up
 ```
 
@@ -149,7 +149,7 @@ py -3.14 -m venv .venv
 pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
-# edit .env — set ENCRYPTION_KEY and JWT_SECRET_KEY before continuing
+# edit .env — set every required secret and admin credential before continuing
 
 # Step 3 — Run database migrations
 alembic upgrade head
@@ -181,7 +181,7 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 cp .env.example .env
-# edit .env — set ENCRYPTION_KEY and JWT_SECRET_KEY before continuing
+# edit .env — set every required secret and admin credential before continuing
 
 # Step 3 — Run database migrations
 alembic upgrade head

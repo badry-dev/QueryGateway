@@ -49,6 +49,7 @@ QueryGateway is a monorepo for creating secure, dynamic REST endpoints from Orac
 - Bind markers inside single-quoted SQL literals are not parameters and must not be used.
 
 ## Endpoint and Scheduler Parameter Conventions
+
 - Preview inputs are temporary samples and are not persisted.
 - Every required HTTP parameter remains required for live and snapshot requests, regardless of
   configured endpoint defaults.
@@ -63,12 +64,14 @@ QueryGateway is a monorepo for creating secure, dynamic REST endpoints from Orac
   `docs/scheduler_parameter_bindings.md`.
 
 ## Logging Conventions
+
 - Use structured logging everywhere.
 - Mandatory fields: `request_id`, `user`, `endpoint`, `status`, `duration_ms`, `method`,
   `client_ip`, `event`.
 - Add scheduler fields for jobs: `job_id`, `run_id`, `row_count`, `success`.
 
 ## Run Commands (Expected)
+
 - Backend setup: `cd backend && python3.14 -m venv .venv && . .venv/bin/activate`
   (Windows: `py -3.14 -m venv .venv`, then `.venv\Scripts\activate`) and install
   `requirements.txt`.
