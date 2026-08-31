@@ -55,7 +55,7 @@ cp .env.example .env
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 cd backend
-python -c "from app.auth.hashing import hash_password; print(hash_password('your-password'))"
+python -c "from getpass import getpass; from app.auth.hashing import hash_password; print(hash_password(getpass('Admin password: ')))"
 cd ..
 
 # Edit .env to set JWT_SECRET_KEY, ENCRYPTION_KEY, ADMIN_USERNAME, and

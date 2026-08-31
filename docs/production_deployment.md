@@ -275,7 +275,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
-python -c "from app.auth.hashing import hash_password; print(hash_password('replace-with-strong-password'))"
+python -c "from getpass import getpass; from app.auth.hashing import hash_password; print(hash_password(getpass('Admin password: ')))"
 ```
 
 Important:
