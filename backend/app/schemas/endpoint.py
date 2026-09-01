@@ -18,8 +18,16 @@ from app.models.endpoint import DataStrategy
 
 # Regex to find named bind parameters in Oracle SQL (:param_name).
 _BIND_PARAM_RE = re.compile(r":([A-Za-z_]\w*)")
+_ORACLE_ALT_QUOTED_LITERAL_PATTERN = (
+    r"(?<![A-Za-z0-9_$#])(?i:n?q)(?:"
+    r"''(?:(?!'').)*''|'\[.*?\]'|'\{.*?\}'|'\(.*?\)'|'<.*?>'|"
+    r"'(?P<q_delimiter>[^\s\[\{\(<'])(?:(?!(?P=q_delimiter)').)*"
+    r"(?P=q_delimiter)'"
+    r")"
+)
 _SQL_NON_CODE_RE = re.compile(
-    r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|--[^\r\n]*|/\*.*?\*/",
+    _ORACLE_ALT_QUOTED_LITERAL_PATTERN
+    + r"|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|--[^\r\n]*|/\*.*?\*/",
     re.DOTALL,
 )
 

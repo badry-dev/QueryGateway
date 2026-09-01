@@ -53,6 +53,23 @@ def test_extract_bind_params_ignores_block_comments() -> None:
     assert extract_bind_params(sql) == ["id"]
 
 
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "q'[John's :debug]'",
+        "q'{ignore :debug}'",
+        "q'(ignore :debug)'",
+        "Q'<ignore :debug>'",
+        "q'!ignore :debug!'",
+        "nq'[national :debug]'",
+        "q''ignore :debug''",
+    ],
+)
+def test_extract_bind_params_ignores_oracle_alternative_quoted_literals(literal: str) -> None:
+    sql = f"SELECT {literal} FROM dual WHERE id = :id"
+    assert extract_bind_params(sql) == ["id"]
+
+
 def test_extract_bind_params_empty() -> None:
     sql = "SELECT 1 FROM dual"
     params = extract_bind_params(sql)
@@ -354,6 +371,14 @@ def test_sql_preview_request_ignores_commented_bind_tokens() -> None:
     payload = SqlPreviewRequest(
         connection_id=uuid.uuid4(),
         sql_text="SELECT 1 FROM dual -- :debug\n/* :trace */",
+    )
+    assert payload.param_schema == {}
+
+
+def test_sql_preview_request_ignores_bind_tokens_in_oracle_alternative_quotes() -> None:
+    payload = SqlPreviewRequest(
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT q'[John's :debug]' FROM dual",
     )
     assert payload.param_schema == {}
 
