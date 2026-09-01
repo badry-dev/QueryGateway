@@ -43,6 +43,16 @@ def test_extract_bind_params_ignores_strings() -> None:
     assert params == ["name"]
 
 
+def test_extract_bind_params_ignores_line_comments() -> None:
+    sql = "SELECT * FROM t WHERE id = :id -- ignore :debug\nAND status = :status"
+    assert extract_bind_params(sql) == ["id", "status"]
+
+
+def test_extract_bind_params_ignores_block_comments() -> None:
+    sql = "SELECT /* ignore :debug */ * FROM t WHERE id = :id /* ignore :trace */"
+    assert extract_bind_params(sql) == ["id"]
+
+
 def test_extract_bind_params_empty() -> None:
     sql = "SELECT 1 FROM dual"
     params = extract_bind_params(sql)
@@ -336,6 +346,14 @@ def test_sql_preview_request_allows_no_schema_without_binds() -> None:
     payload = SqlPreviewRequest(
         connection_id=uuid.uuid4(),
         sql_text="SELECT 1 FROM dual",
+    )
+    assert payload.param_schema == {}
+
+
+def test_sql_preview_request_ignores_commented_bind_tokens() -> None:
+    payload = SqlPreviewRequest(
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT 1 FROM dual -- :debug\n/* :trace */",
     )
     assert payload.param_schema == {}
 

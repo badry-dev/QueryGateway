@@ -18,6 +18,10 @@ from app.models.endpoint import DataStrategy
 
 # Regex to find named bind parameters in Oracle SQL (:param_name).
 _BIND_PARAM_RE = re.compile(r":([A-Za-z_]\w*)")
+_SQL_NON_CODE_RE = re.compile(
+    r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|--[^\r\n]*|/\*.*?\*/",
+    re.DOTALL,
+)
 
 # Reject obvious string-interpolation patterns that bypass bind variables.
 _UNSAFE_PATTERNS = [
@@ -51,9 +55,8 @@ class SnapshotConfigurationError(ValueError):
 
 
 def extract_bind_params(sql: str) -> list[str]:
-    """Return deduplicated bind parameter names from SQL text."""
-    # Exclude matches inside single-quoted string literals.
-    cleaned = re.sub(r"'[^']*'", "", sql)
+    """Return deduplicated binds outside SQL literals, identifiers, and comments."""
+    cleaned = _SQL_NON_CODE_RE.sub(" ", sql)
     return list(dict.fromkeys(_BIND_PARAM_RE.findall(cleaned)))
 
 
