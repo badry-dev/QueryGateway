@@ -346,7 +346,9 @@ async def test_sql_preview_coerces_date_before_oracle_execution(
     )
 
     execute_query.assert_awaited_once()
-    assert execute_query.await_args.kwargs["params"] == {"start_date": date(2026, 8, 30)}
+    execute_call = execute_query.await_args
+    assert execute_call is not None
+    assert execute_call.kwargs["params"] == {"start_date": date(2026, 8, 30)}
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 """Typed request filtering for persisted snapshot rows."""
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -96,8 +97,8 @@ def _coerce_cached_row_value(item: CompiledSnapshotFilter, value: object) -> Any
 def snapshot_covers_request(
     *,
     filters: tuple[CompiledSnapshotFilter, ...],
-    request_params: dict[str, object],
-    resolved_params: dict[str, object],
+    request_params: Mapping[str, object],
+    resolved_params: Mapping[str, object],
 ) -> bool:
     """Return whether one snapshot job run contains the requested selection."""
     for item in filters:
@@ -228,7 +229,7 @@ def validate_snapshot_rows_match_resolved_parameters(
     *,
     rows: list[dict[str, object]],
     filters: tuple[CompiledSnapshotFilter, ...],
-    resolved_params: dict[str, object],
+    resolved_params: Mapping[str, object],
 ) -> None:
     """Reject non-empty snapshot results that contradict their resolved schedule bounds."""
     if not rows:
