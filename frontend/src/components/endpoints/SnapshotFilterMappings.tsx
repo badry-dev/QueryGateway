@@ -40,9 +40,25 @@ export function SnapshotFilterMappings({
       <div>
         <h4 className="font-medium">Snapshot request filters</h4>
         <p className="mt-1 text-sm text-muted-foreground">
-          Map every request parameter to a cached output column. These mappings select rows; they do
-          not grant tenant access.
+          Define how each API request parameter filters rows already stored in a snapshot. For each
+          parameter, choose the matching cached output column and comparison. Use the final column
+          name returned by the query after any output-column renaming.
         </p>
+        <div className="mt-2 space-y-1 rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
+          <p>
+            Example: map <code>:start_date</code> to <code>DT</code> with From / minimum,{" "}
+            <code>:end_date</code> to <code>DT</code> with To / maximum, and <code>:store_id</code>{" "}
+            to <code>STR_NO</code> with Equals.
+          </p>
+          <p>
+            From / minimum keeps rows on or after the request value; To / maximum keeps rows on or
+            before it. Equals keeps exact matches.
+          </p>
+          <p>
+            These mappings filter cached rows only. They do not change what the schedule loads and
+            do not grant tenant access.
+          </p>
+        </div>
       </div>
       {Object.entries(paramSchema).map(([name, descriptor]) => {
         const mapping = descriptor.snapshot_filter;

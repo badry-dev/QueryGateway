@@ -32,6 +32,10 @@ from app.repositories.schedule import ScheduleRepository
 from app.repositories.snapshot import SnapshotRepository
 from app.schemas.schedule import ScheduleWindow
 from app.services.schedule_bindings import resolve_schedule_parameters
+from app.services.snapshot_filtering import (
+    compile_snapshot_filters,
+    validate_snapshot_rows_match_resolved_parameters,
+)
 from app.sql.executor import execute_query
 
 log = structlog.get_logger().bind(
@@ -235,6 +239,12 @@ async def execute_scheduled_job(
                             new_row[key] = value
                     mapped_rows.append(new_row)
                 rows = mapped_rows
+
+            validate_snapshot_rows_match_resolved_parameters(
+                rows=rows,
+                filters=compile_snapshot_filters(param_schema),
+                resolved_params=params,
+            )
 
             # Save snapshot
             snapshot = Snapshot(

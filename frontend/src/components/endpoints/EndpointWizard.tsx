@@ -73,6 +73,7 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
             return [name, value];
           }),
         ),
+        param_schema: state.param_schema,
         max_rows: 10,
       }),
     onSuccess: (data) => {
@@ -137,6 +138,14 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
         param_schema: { ...s.param_schema, [name]: descriptor },
       };
     });
+    if (field === "type") {
+      setPreviewParams((current) => {
+        const next = { ...current };
+        delete next[name];
+        return next;
+      });
+    }
+    setPreview(null);
   }, []);
 
   const canNext = (): boolean => {
@@ -216,6 +225,7 @@ export function EndpointWizard({ onSuccess, onCancel }: EndpointWizardProps) {
           previewParams={previewParams}
           isPreviewing={previewMutation.isPending}
           onPreview={() => previewMutation.mutate()}
+          onUpdateParam={updateParam}
           onUpdatePreviewParam={(name, value) =>
             setPreviewParams((current) => ({ ...current, [name]: value }))
           }

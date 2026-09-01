@@ -494,14 +494,24 @@ async def test_preview_schedule_resolves_next_runs(async_client: object) -> None
 
 @pytest.mark.integration
 async def test_scheduled_execution_persists_logical_context_and_is_idempotent(
-    async_client: object, monkeypatch: pytest.MonkeyPatch
+    async_client: object,
+    db_session: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from unittest.mock import AsyncMock
 
     from app.services import scheduler as scheduler_service
     from httpx import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     client: AsyncClient = async_client  # type: ignore[assignment]
+    db: AsyncSession = db_session  # type: ignore[assignment]
+    assert db.bind is not None
+    monkeypatch.setattr(
+        scheduler_service,
+        "AsyncSessionLocal",
+        async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False),
+    )
     endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
     created = await client.post(
         "/api/v1/admin/schedules/",
@@ -522,8 +532,8 @@ async def test_scheduled_execution_persists_logical_context_and_is_idempotent(
 
     execute_query = AsyncMock(
         return_value=(
-            ["ORDER_ID"],
-            [{"ORDER_ID": 42}],
+            ["business_date", "ORDER_ID"],
+            [{"business_date": "2026-08-25 00:00:00", "ORDER_ID": 42}],
             12,
         )
     )
@@ -565,6 +575,77 @@ async def test_scheduled_execution_persists_logical_context_and_is_idempotent(
         "start_date": date(2026, 8, 24),
         "end_date": date(2026, 8, 30),
     }
+
+
+@pytest.mark.integration
+async def test_scheduled_execution_rejects_rows_outside_resolved_snapshot_window(
+    async_client: object,
+    db_session: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.models.snapshot import Snapshot
+    from app.services import scheduler as scheduler_service
+    from httpx import AsyncClient
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    db: AsyncSession = db_session  # type: ignore[assignment]
+    assert db.bind is not None
+    monkeypatch.setattr(
+        scheduler_service,
+        "AsyncSessionLocal",
+        async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False),
+    )
+    endpoint_id = await _create_snapshot_endpoint_with_date_range(client)
+    created = await client.post(
+        "/api/v1/admin/schedules/",
+        json={
+            "endpoint_id": endpoint_id,
+            "schedule_type": "cron",
+            "cron_expression": "0 6 * * *",
+            "timezone": "Asia/Riyadh",
+            "parameter_bindings": {
+                "start_date": {"source": "window_start"},
+                "end_date": {"source": "window_end"},
+            },
+            "window": {"preset": "last_n_complete_days", "days": 7},
+        },
+    )
+    assert created.status_code == 201
+    schedule_id = created.json()["id"]
+
+    execute_query = AsyncMock(
+        return_value=(
+            ["business_date", "ORDER_ID"],
+            [{"business_date": "0026-08-25 00:00:00", "ORDER_ID": 42}],
+            12,
+        )
+    )
+    monkeypatch.setattr(scheduler_service, "execute_query", execute_query)
+
+    await scheduler_service.execute_scheduled_job(
+        schedule_id,
+        endpoint_id,
+        scheduled_for=datetime(2026, 8, 31, 3, tzinfo=UTC),
+    )
+
+    runs_response = await client.get(
+        "/api/v1/admin/schedules/jobs/",
+        params={"schedule_id": schedule_id},
+    )
+    assert runs_response.status_code == 200
+    runs = runs_response.json()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+    assert "1 of 1 cached rows do not match" in runs[0]["error_detail"]
+
+    snapshot = await db.scalar(
+        select(Snapshot).where(Snapshot.endpoint_id == uuid.UUID(endpoint_id))
+    )
+    assert snapshot is None
 
 
 @pytest.mark.integration

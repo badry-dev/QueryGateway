@@ -18,6 +18,7 @@ from app.models.endpoint import DataStrategy
 
 # Regex to find named bind parameters in Oracle SQL (:param_name).
 _BIND_PARAM_RE = re.compile(r":([A-Za-z_]\w*)")
+_ORACLE_ALT_QUOTE_PAIRS = {"[": "]", "{": "}", "(": ")", "<": ">"}
 
 # Reject obvious string-interpolation patterns that bypass bind variables.
 _UNSAFE_PATTERNS = [
@@ -50,10 +51,87 @@ class SnapshotConfigurationError(ValueError):
     """Raised when a snapshot endpoint cannot execute without request inputs."""
 
 
+def _is_oracle_identifier_char(value: str) -> bool:
+    """Match the identifier boundary used by Oracle alternative-quote prefixes."""
+    return (value.isascii() and value.isalnum()) or value in "_$#"
+
+
+def _quoted_region_end(sql: str, start: int, quote: str) -> int:
+    """Return the end of a standard SQL literal or quoted identifier."""
+    index = start + 1
+    while index < len(sql):
+        if sql[index] != quote:
+            index += 1
+            continue
+        if index + 1 < len(sql) and sql[index + 1] == quote:
+            index += 2
+            continue
+        return index + 1
+    return len(sql)
+
+
+def _oracle_alt_quote_end(sql: str, start: int) -> int | None:
+    """Return the end of a Q/NQ literal, or ``None`` when no prefix starts here."""
+    if start > 0 and _is_oracle_identifier_char(sql[start - 1]):
+        return None
+
+    quote_index: int
+    if sql[start] in "qQ":
+        quote_index = start + 1
+    elif sql[start] in "nN" and start + 1 < len(sql) and sql[start + 1] in "qQ":
+        quote_index = start + 2
+    else:
+        return None
+
+    delimiter_index = quote_index + 1
+    if (
+        quote_index >= len(sql)
+        or sql[quote_index] != "'"
+        or delimiter_index >= len(sql)
+        or sql[delimiter_index].isspace()
+    ):
+        return None
+
+    closing_delimiter = _ORACLE_ALT_QUOTE_PAIRS.get(sql[delimiter_index], sql[delimiter_index])
+    closing_index = sql.find(closing_delimiter + "'", delimiter_index + 1)
+    return len(sql) if closing_index < 0 else closing_index + 2
+
+
+def _mask_sql_non_code(sql: str) -> str:
+    """Mask quoted and commented regions in one monotonic pass."""
+    segments: list[str] = []
+    code_start = 0
+    index = 0
+
+    while index < len(sql):
+        region_end: int | None = None
+        if sql.startswith("--", index):
+            newline_index = sql.find("\n", index + 2)
+            region_end = len(sql) if newline_index < 0 else newline_index
+        elif sql.startswith("/*", index):
+            comment_end = sql.find("*/", index + 2)
+            region_end = len(sql) if comment_end < 0 else comment_end + 2
+        elif sql[index] in "qQnN":
+            region_end = _oracle_alt_quote_end(sql, index)
+        if region_end is None and sql[index] in {"'", '"'}:
+            region_end = _quoted_region_end(sql, index, sql[index])
+
+        if region_end is None:
+            index += 1
+            continue
+
+        segments.append(sql[code_start:index])
+        segments.append(" " * (region_end - index))
+        index = region_end
+        code_start = region_end
+
+    segments.append(sql[code_start:])
+    return "".join(segments)
+
+
 def extract_bind_params(sql: str) -> list[str]:
-    """Return deduplicated bind parameter names from SQL text."""
-    # Exclude matches inside single-quoted string literals.
-    cleaned = re.sub(r"'[^']*'", "", sql)
+    """Return deduplicated binds outside SQL literals, identifiers, and comments."""
+    cleaned = _mask_sql_non_code(sql)
     return list(dict.fromkeys(_BIND_PARAM_RE.findall(cleaned)))
 
 
@@ -388,6 +466,13 @@ class SqlPreviewRequest(BaseModel):
     connection_id: uuid.UUID
     sql_text: str = Field(..., min_length=1)
     params: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    param_schema: dict[str, ParamDescriptor] = Field(
+        default_factory=dict,
+        description=(
+            "Typed descriptors for preview bind parameters. Bind-bearing SQL requires an exact "
+            "schema match so values can be coerced before Oracle execution."
+        ),
+    )
     max_rows: int = Field(10, ge=1, le=100)
 
     @field_validator("sql_text")
@@ -397,6 +482,30 @@ class SqlPreviewRequest(BaseModel):
         if errors:
             raise ValueError("; ".join(errors))
         return v
+
+    @model_validator(mode="after")
+    def typed_schema_matches_bind_params(self) -> Self:
+        sql_params = set(extract_bind_params(self.sql_text))
+        if not self.param_schema:
+            if sql_params:
+                raise ValueError(
+                    "SQL preview bind parameters require typed schema descriptors for: "
+                    f"{sorted(sql_params)}"
+                )
+            return self
+
+        schema_params = set(self.param_schema)
+        undeclared = sql_params - schema_params
+        unused = schema_params - sql_params
+        if undeclared:
+            raise ValueError(
+                f"SQL references preview params not declared in schema: {sorted(undeclared)}"
+            )
+        if unused:
+            raise ValueError(
+                f"Preview schema declares params not referenced in SQL: {sorted(unused)}"
+            )
+        return self
 
 
 class SqlPreviewResponse(BaseModel):

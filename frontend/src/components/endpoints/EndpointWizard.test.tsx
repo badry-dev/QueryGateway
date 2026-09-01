@@ -88,6 +88,13 @@ describe("EndpointWizard preview coordination", () => {
     await waitFor(() => expect(previewMock).toHaveBeenCalledOnce());
     expect(previewMock.mock.calls[0][0]).toMatchObject({
       params: { customer_id: null },
+      param_schema: {
+        customer_id: expect.objectContaining({
+          type: "string",
+          required: false,
+          default_is_null: true,
+        }),
+      },
     });
   });
 
@@ -104,6 +111,31 @@ describe("EndpointWizard preview coordination", () => {
 
     await waitFor(() => expect(previewMock).toHaveBeenCalledOnce());
     expect(previewMock.mock.calls[0][0].params.customer_id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(previewMock.mock.calls[0][0].param_schema.customer_id.type).toBe("date");
+  });
+
+  it("sends an inline preview type with the sample value", async () => {
+    renderWizard();
+    fireEvent.click(await screen.findByRole("button", { name: /Test Oracle/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.change(screen.getByLabelText("SQL query"), {
+      target: { value: "SELECT * FROM orders WHERE business_date >= :start_date" },
+    });
+    fireEvent.change(screen.getByLabelText("Preview type for start_date"), {
+      target: { value: "date" },
+    });
+    fireEvent.change(screen.getByLabelText(":start_date"), {
+      target: { value: "2026-08-30" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview Query" }));
+
+    await waitFor(() => expect(previewMock).toHaveBeenCalledOnce());
+    expect(previewMock.mock.calls[0][0]).toMatchObject({
+      params: { start_date: "2026-08-30" },
+      param_schema: {
+        start_date: expect.objectContaining({ type: "date", required: true }),
+      },
+    });
   });
 
   it("requires snapshot row mappings before review", async () => {

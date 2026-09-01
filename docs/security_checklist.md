@@ -40,7 +40,7 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 22 | Template interpolation rejected (`${`, `{var}`) | Verified | Pattern included in safety validation |
 | 23 | SQL validation runs on both create and update | Verified | `EndpointCreate` and `EndpointUpdate` share the validator |
 | 24 | SQL preview also validates before execution | Verified | `SqlPreviewRequest` includes the same validator |
-| 25 | Parameters coerced through typed schemas before SQL execution | Verified | `build_param_model()` creates the Pydantic request model; `DataService` enforces required fields before binding |
+| 25 | Parameters coerced through typed schemas before SQL execution | Verified | `build_param_model()` creates the Pydantic request model; `DataService` and typed admin SQL preview validate values before binding |
 | 26 | SQLAlchemy `text()` with bind dict used for execution | Verified | `sql/executor.py` uses parameterized execution |
 
 ## Input Validation
@@ -126,11 +126,12 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 68 | Cached data is served only after retained-run coverage and typed row filtering | Verified | `DataService._serve_snapshot()` selects the newest covering job run, validates mapped columns, and calls `filter_snapshot_rows()`; no unfiltered fallback exists |
 | 69 | Range and SQL `NULL` coverage semantics fail closed | Verified | Reversed bounds return 422; range types must match; `null_means_all` is limited to optional equality mappings |
 | 70 | Snapshot filter mappings cannot substitute for authorization | Verified | Data authentication runs before snapshot selection; `store_id` and other mapped values are ordinary row filters only |
+| 71 | SQL bind discovery has linear processing cost | Verified | A monotonic scanner masks quoted/commented regions before bind extraction; adversarial unterminated Q-quote input is regression-tested |
 
 ## Summary
 
-- **Verified items**: 64/70
-- **Action required**: 6/70
+- **Verified items**: 65/71
+- **Action required**: 6/71
 - **High-severity unresolved findings**: 0
 - **All code-level security controls validated through automated tests**
 

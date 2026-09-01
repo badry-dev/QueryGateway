@@ -2,9 +2,10 @@ import { Button } from "@/components/ui/button";
 import { SqlEditor } from "@/components/endpoints/SqlEditor";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { SqlPreviewResponse } from "@/types/endpoint";
+import { Select } from "@/components/ui/select";
+import type { ParamDescriptor, SqlPreviewResponse } from "@/types/endpoint";
 
-import { hasParameterDefault } from "./parameterDefaults";
+import { hasParameterDefault, resolvePreviewParameterDefault } from "./parameterDefaults";
 import type { WizardState, WizardUpdate } from "./types";
 
 interface SqlStepProps {
@@ -14,6 +15,7 @@ interface SqlStepProps {
   previewParams: Record<string, string>;
   isPreviewing: boolean;
   onPreview: () => void;
+  onUpdateParam: (name: string, field: keyof ParamDescriptor, value: unknown) => void;
   onUpdatePreviewParam: (name: string, value: string) => void;
 }
 
@@ -24,6 +26,7 @@ export function SqlStep({
   previewParams,
   isPreviewing,
   onPreview,
+  onUpdateParam,
   onUpdatePreviewParam,
 }: SqlStepProps) {
   const bindParams = Object.entries(state.param_schema);
@@ -45,28 +48,83 @@ export function SqlStep({
           <div>
             <h4 className="text-sm font-medium">Preview parameters</h4>
             <p className="text-xs text-muted-foreground">
-              Enter a sample value for each bind parameter. These values are used only for this
-              preview and are not saved as endpoint defaults.
+              Choose the Oracle bind type and enter a sample value for each parameter. Values are
+              validated and typed before execution, used only for this preview, and not saved as
+              endpoint defaults.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {bindParams.map(([name, descriptor]) => (
-              <div key={name}>
-                <Label htmlFor={`preview-param-${name}`} className="text-xs">
-                  :{name}
-                </Label>
-                <Input
-                  id={`preview-param-${name}`}
-                  className="mt-1 h-8 text-sm"
-                  value={
-                    previewParams[name] ??
-                    (descriptor.default != null ? String(descriptor.default) : "")
-                  }
-                  onChange={(event) => onUpdatePreviewParam(name, event.target.value)}
-                  placeholder="Sample value"
-                />
-              </div>
-            ))}
+          <div className="space-y-3">
+            {bindParams.map(([name, descriptor]) => {
+              const typeInputId = `preview-param-type-${name}`;
+              const valueInputId = `preview-param-${name}`;
+              const resolvedDefault = resolvePreviewParameterDefault(descriptor);
+              const value =
+                previewParams[name] ??
+                (resolvedDefault !== null && resolvedDefault !== undefined
+                  ? String(resolvedDefault)
+                  : "");
+
+              return (
+                <div key={name} className="rounded-md bg-muted/40 p-3">
+                  <p className="mb-2 font-mono text-sm font-medium">:{name}</p>
+                  <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
+                    <div>
+                      <Label htmlFor={typeInputId} className="text-xs">
+                        Parameter type
+                      </Label>
+                      <Select
+                        id={typeInputId}
+                        aria-label={`Preview type for ${name}`}
+                        className="mt-1 h-9"
+                        value={descriptor.type}
+                        onChange={(event) => onUpdateParam(name, "type", event.target.value)}
+                      >
+                        <option value="string">String</option>
+                        <option value="integer">Integer</option>
+                        <option value="float">Float</option>
+                        <option value="boolean">Boolean</option>
+                        <option value="date">Date</option>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor={valueInputId} className="text-xs">
+                        Sample value
+                      </Label>
+                      {descriptor.type === "boolean" ? (
+                        <Select
+                          id={valueInputId}
+                          aria-label={`:${name}`}
+                          className="mt-1 h-9"
+                          value={value}
+                          onChange={(event) => onUpdatePreviewParam(name, event.target.value)}
+                        >
+                          <option value="">Select true or false</option>
+                          <option value="true">True</option>
+                          <option value="false">False</option>
+                        </Select>
+                      ) : (
+                        <Input
+                          id={valueInputId}
+                          aria-label={`:${name}`}
+                          className="mt-1 h-9 text-sm"
+                          type={
+                            descriptor.type === "date"
+                              ? "date"
+                              : descriptor.type === "integer" || descriptor.type === "float"
+                                ? "number"
+                                : "text"
+                          }
+                          step={descriptor.type === "float" ? "any" : undefined}
+                          value={value}
+                          onChange={(event) => onUpdatePreviewParam(name, event.target.value)}
+                          placeholder="Sample value"
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

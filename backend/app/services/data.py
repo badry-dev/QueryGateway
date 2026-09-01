@@ -46,6 +46,7 @@ from app.services.snapshot_filtering import (
     snapshot_covers_request,
     unavailable_snapshot_filter_columns,
     validate_snapshot_parameter_ranges,
+    validate_snapshot_rows_match_resolved_parameters,
 )
 from app.sql.executor import SqlExecutionError, execute_query
 from app.sql.param_models import build_param_model
@@ -345,6 +346,7 @@ class DataService:
             )
 
         snapshot = None
+        integrity_failures: list[tuple[str, str]] = []
         if not param_schema:
             snapshot = snapshots[0]
         else:
@@ -361,15 +363,58 @@ class DataService:
                 if candidate.job_run_id is None:
                     continue
                 job_run = job_runs_by_id.get(candidate.job_run_id)
-                if job_run is not None and snapshot_covers_request(
+                if job_run is None or not snapshot_covers_request(
                     filters=filters,
                     request_params=params,
                     resolved_params=job_run.resolved_params_json or {},
                 ):
+                    continue
+
+                if not isinstance(candidate.data, list):
+                    integrity_failures.append(
+                        (str(candidate.id), "Snapshot payload is not a row array.")
+                    )
+                    continue
+                candidate_data = candidate.data
+                if unavailable_snapshot_filter_columns(rows=candidate_data, filters=filters):
+                    # Preserve the existing configuration-error response below. An endpoint edit
+                    # can invalidate mappings even when the stored snapshot itself was valid.
                     snapshot = candidate
                     break
+                try:
+                    validate_snapshot_rows_match_resolved_parameters(
+                        rows=candidate_data,
+                        filters=filters,
+                        resolved_params=job_run.resolved_params_json or {},
+                    )
+                except ValueError as exc:
+                    integrity_failures.append((str(candidate.id), str(exc)))
+                    continue
+                snapshot = candidate
+                break
 
         if snapshot is None:
+            if integrity_failures:
+                self._log_snapshot_rejection(
+                    request=request,
+                    endpoint=endpoint,
+                    path=path,
+                    principal=principal,
+                    started_at=started_at,
+                    event="snapshot_integrity_failed",
+                    response_status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    details={
+                        "snapshot_ids": [item[0] for item in integrity_failures],
+                        "integrity_errors": [item[1] for item in integrity_failures],
+                    },
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    content={
+                        "code": "snapshot_integrity_failed",
+                        "detail": "No retained snapshot passed integrity validation.",
+                    },
+                )
             self._log_snapshot_rejection(
                 request=request,
                 endpoint=endpoint,
@@ -438,18 +483,21 @@ class DataService:
         principal: str | None,
         started_at: float,
         event: str,
+        response_status: int = status.HTTP_422_UNPROCESSABLE_ENTITY,
+        details: dict[str, object] | None = None,
     ) -> None:
-        """Emit the required request context before a snapshot HTTP 422 response."""
+        """Emit required request context before a snapshot rejection response."""
         log.warning(
             event,
             request_id=resolve_request_id(request),
             user=principal or "anonymous",
             endpoint=path,
             endpoint_id=str(endpoint.id),
-            status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status=response_status,
             duration_ms=round((time.perf_counter() - started_at) * 1000, 2),
             method=request.method,
             client_ip=request.client.host if request.client else None,
+            **(details or {}),
         )
 
     # ── Live mode ───────────────────────────────────────────────────────────

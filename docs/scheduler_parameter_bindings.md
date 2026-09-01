@@ -21,8 +21,13 @@ QueryGateway treats the same SQL bind name differently depending on where it is 
   `NULL`.
 - Date requests accept `YYYY-MM-DD` and `DD-MM-YYYY` and normalize to a Python `date` before
   binding. Boolean requests accept `true`, `false`, `1`, `0`, `yes`, or `no`.
-- Preview sample values are request-local and never become endpoint defaults or schedule
-  bindings.
+- In SQL preview, choose each bind's declared type before running the query. A preview query that
+  contains binds is rejected unless its typed schema describes every detected bind exactly. The
+  backend then validates and converts the temporary values through the same parameter model used
+  by published endpoints before Oracle execution.
+- Preview sample values are request-local and never become endpoint defaults or schedule bindings.
+  Keep native date binds such as `:start_date` in SQL; do not wrap an already typed date bind in
+  `TO_DATE(...)`.
 
 For example, a required date range and optional store filter are supplied as ordinary query
 parameters:
@@ -100,10 +105,12 @@ window boundaries, and resolved typed parameters.
 
 ## Snapshot request filters and coverage
 
-Schedule bindings decide which rows Oracle loads into a snapshot. Authenticated data-request
-parameters decide which rows are returned from that cache. Every parameterized snapshot endpoint
-must explicitly map each request parameter to a cached output column after `column_map` renaming
-and one whitelisted comparison:
+Schedule bindings decide which rows Oracle loads into a snapshot. Snapshot request filters do a
+different job: they decide which of those cached rows an authenticated API request receives. Every
+parameterized snapshot endpoint must map each request parameter to the final cached output column
+after `column_map` renaming and one whitelisted comparison. For example, `:start_date` and
+`:end_date` can both map to `DT` with `gte` and `lte`, while `:store_id` maps to `STR_NO`
+with `eq`:
 
 | Operator | Row selection | Coverage requirement |
 |---|---|---|
@@ -153,6 +160,16 @@ persisted job-run parameters cover the complete request. It then applies every c
 to the cached rows using the parameter's declared type. Date columns containing Oracle
 DATE/TIMESTAMP ISO strings are normalized to dates before comparison. Behavior is explicit:
 
+- Before persistence, every non-empty scheduled result is validated against the schedule's
+  resolved parameters using the endpoint's final cached-column mappings. A missing mapped column,
+  an unparseable mapped value, or a row outside an `eq`, `gte`, or `lte` bound fails the job and no
+  new snapshot is stored. Previously retained valid snapshots remain available. The scheduler does
+  not guess or rewrite malformed values such as a cached year `0026`; correct the SQL bind handling
+  and rerun the schedule.
+- Retained snapshots are revalidated when selected. An inconsistent candidate is skipped when an
+  older valid snapshot covers the request. If every covering candidate fails integrity validation,
+  the request returns HTTP 503 with `code=snapshot_integrity_failed`; structured logs include the
+  rejected snapshot IDs and integrity errors.
 - Missing or invalid required parameters return HTTP 422 with the field in `detail`.
 - Lower and upper mappings for the same cached column must declare the same parameter type.
 - When multiple parameters provide bounds for the same cached column, validation retains every
@@ -164,6 +181,8 @@ DATE/TIMESTAMP ISO strings are normalized to dates before comparison. Behavior i
 - A request inside coverage with no matching business rows returns HTTP 200 with `data: []`.
 - An endpoint created before this contract without complete mappings returns HTTP 422 with `code=snapshot_filter_not_configured`; add mappings through the endpoint edit dialog or admin update API.
 - A mapping that does not exist in a non-empty cached row returns HTTP 422 with `code=snapshot_filter_column_unavailable`.
+- If no covering retained snapshot passes row-integrity validation, the request returns HTTP 503
+  with `code=snapshot_integrity_failed`.
 - No retained snapshot still returns HTTP 503.
 
 Representative stable error bodies are:
@@ -179,6 +198,13 @@ Representative stable error bodies are:
 {
   "code": "invalid_parameter_range",
   "detail": "Snapshot filter lower bound must not exceed its upper bound."
+}
+```
+
+```json
+{
+  "code": "snapshot_integrity_failed",
+  "detail": "No retained snapshot passed integrity validation."
 }
 ```
 

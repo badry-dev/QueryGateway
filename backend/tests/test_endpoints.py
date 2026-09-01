@@ -7,6 +7,10 @@ Unit tests exercise schema validation, SQL safety, and bind parameter extraction
 """
 
 import uuid
+from datetime import date
+from time import perf_counter
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.schemas.endpoint import (
@@ -38,6 +42,59 @@ def test_extract_bind_params_ignores_strings() -> None:
     sql = "SELECT * FROM t WHERE name = :name AND label = ':not_a_param'"
     params = extract_bind_params(sql)
     assert params == ["name"]
+
+
+def test_extract_bind_params_ignores_escaped_quotes_and_quoted_identifiers() -> None:
+    sql = "SELECT 'it''s :not_a_param', \"COLUMN:ALSO_NOT\" FROM t WHERE id = :id"
+    assert extract_bind_params(sql) == ["id"]
+
+
+def test_extract_bind_params_ignores_line_comments() -> None:
+    sql = "SELECT * FROM t WHERE id = :id -- ignore :debug\nAND status = :status"
+    assert extract_bind_params(sql) == ["id", "status"]
+
+
+def test_extract_bind_params_ignores_block_comments() -> None:
+    sql = "SELECT /* ignore :debug */ * FROM t WHERE id = :id /* ignore :trace */"
+    assert extract_bind_params(sql) == ["id"]
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "q'[John's :debug]'",
+        "q'{ignore :debug}'",
+        "q'(ignore :debug)'",
+        "Q'<ignore :debug>'",
+        "q'!ignore :debug!'",
+        "nq'[national :debug]'",
+        "q''ignore :debug''",
+    ],
+)
+def test_extract_bind_params_ignores_oracle_alternative_quoted_literals(literal: str) -> None:
+    sql = f"SELECT {literal} FROM dual WHERE id = :id"
+    assert extract_bind_params(sql) == ["id"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT ':ignored",
+        'SELECT "column:ignored',
+        "SELECT /* :ignored",
+        "SELECT q'[unterminated :ignored",
+    ],
+)
+def test_extract_bind_params_masks_unterminated_non_code_regions(sql: str) -> None:
+    assert extract_bind_params(sql) == []
+
+
+def test_extract_bind_params_handles_adversarial_alt_quotes_in_linear_time() -> None:
+    sql = ("q'[" * 32_768) + "unterminated"
+    started_at = perf_counter()
+
+    assert extract_bind_params(sql) == []
+    assert perf_counter() - started_at < 0.5
 
 
 def test_extract_bind_params_empty() -> None:
@@ -303,9 +360,107 @@ def test_sql_preview_request_valid() -> None:
         connection_id=uuid.uuid4(),
         sql_text="SELECT * FROM employees WHERE dept_id = :dept_id",
         params={"dept_id": 10},
+        param_schema={"dept_id": {"type": "integer", "required": True}},
         max_rows=5,
     )
     assert payload.max_rows == 5
+    assert payload.param_schema["dept_id"].type == "integer"
+
+
+def test_sql_preview_request_rejects_typed_schema_mismatch() -> None:
+    with pytest.raises(ValueError, match="not declared in schema"):
+        SqlPreviewRequest(
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT * FROM employees WHERE hired_on >= :start_date",
+            params={"start_date": "2026-08-30"},
+            param_schema={"other_date": {"type": "date", "required": True}},
+        )
+
+
+def test_sql_preview_request_requires_typed_schema_for_binds() -> None:
+    with pytest.raises(ValueError, match="require typed schema descriptors"):
+        SqlPreviewRequest(
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT * FROM employees WHERE hired_on >= :start_date",
+            params={"start_date": "2026-08-30"},
+        )
+
+
+def test_sql_preview_request_allows_no_schema_without_binds() -> None:
+    payload = SqlPreviewRequest(
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT 1 FROM dual",
+    )
+    assert payload.param_schema == {}
+
+
+def test_sql_preview_request_ignores_commented_bind_tokens() -> None:
+    payload = SqlPreviewRequest(
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT 1 FROM dual -- :debug\n/* :trace */",
+    )
+    assert payload.param_schema == {}
+
+
+def test_sql_preview_request_ignores_bind_tokens_in_oracle_alternative_quotes() -> None:
+    payload = SqlPreviewRequest(
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT q'[John's :debug]' FROM dual",
+    )
+    assert payload.param_schema == {}
+
+
+@pytest.mark.asyncio
+async def test_sql_preview_coerces_date_before_oracle_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.endpoint import EndpointService
+
+    connection = SimpleNamespace(is_active=True)
+    connection_repo = MagicMock()
+    connection_repo.get_by_id = AsyncMock(return_value=connection)
+    execute_query = AsyncMock(return_value=(["DT"], [], 1.0))
+    monkeypatch.setattr("app.services.endpoint.execute_query", execute_query)
+    service = EndpointService(repo=MagicMock(), conn_repo=connection_repo)
+
+    await service.preview_sql(
+        SqlPreviewRequest(
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT DT FROM orders WHERE DT >= :start_date",
+            params={"start_date": "30-08-2026"},
+            param_schema={"start_date": {"type": "date", "required": True}},
+        )
+    )
+
+    execute_query.assert_awaited_once()
+    execute_call = execute_query.await_args
+    assert execute_call is not None
+    assert execute_call.kwargs["params"] == {"start_date": date(2026, 8, 30)}
+
+
+@pytest.mark.asyncio
+async def test_sql_preview_rejects_invalid_typed_date_before_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.endpoint import EndpointService
+
+    connection_repo = MagicMock()
+    connection_repo.get_by_id = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    execute_query = AsyncMock()
+    monkeypatch.setattr("app.services.endpoint.execute_query", execute_query)
+    service = EndpointService(repo=MagicMock(), conn_repo=connection_repo)
+
+    with pytest.raises(ValueError, match="Invalid value for preview parameter 'start_date'"):
+        await service.preview_sql(
+            SqlPreviewRequest(
+                connection_id=uuid.uuid4(),
+                sql_text="SELECT DT FROM orders WHERE DT >= :start_date",
+                params={"start_date": "not-a-date"},
+                param_schema={"start_date": {"type": "date", "required": True}},
+            )
+        )
+
+    execute_query.assert_not_awaited()
 
 
 # ── API integration tests (require PostgreSQL) ──────────────────────────────

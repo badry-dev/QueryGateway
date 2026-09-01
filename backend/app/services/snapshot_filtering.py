@@ -1,6 +1,7 @@
 """Typed request filtering for persisted snapshot rows."""
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
@@ -96,8 +97,8 @@ def _coerce_cached_row_value(item: CompiledSnapshotFilter, value: object) -> Any
 def snapshot_covers_request(
     *,
     filters: tuple[CompiledSnapshotFilter, ...],
-    request_params: dict[str, object],
-    resolved_params: dict[str, object],
+    request_params: Mapping[str, object],
+    resolved_params: Mapping[str, object],
 ) -> bool:
     """Return whether one snapshot job run contains the requested selection."""
     for item in filters:
@@ -174,6 +175,9 @@ def unavailable_snapshot_filter_columns(
     """Return configured output columns absent from a non-empty snapshot."""
     if not rows:
         return []
+    # TODO: Resolve configured filter columns against snapshot keys case-insensitively before both
+    # availability validation and row filtering, while rejecting ambiguous keys that differ only
+    # by case.
     available = {column for row in rows for column in row}
     return sorted({item.column for item in filters} - available)
 
@@ -219,3 +223,47 @@ def filter_snapshot_rows(
         if matches:
             filtered.append(row)
     return filtered
+
+
+def validate_snapshot_rows_match_resolved_parameters(
+    *,
+    rows: list[dict[str, object]],
+    filters: tuple[CompiledSnapshotFilter, ...],
+    resolved_params: Mapping[str, object],
+) -> None:
+    """Reject non-empty snapshot results that contradict their resolved schedule bounds."""
+    if not rows:
+        return
+
+    missing_columns = unavailable_snapshot_filter_columns(rows=rows, filters=filters)
+    if missing_columns:
+        raise ValueError(
+            "Snapshot integrity validation failed: configured filter columns are absent from "
+            f"the cached output: {', '.join(missing_columns)}."
+        )
+
+    normalized_params = dict(resolved_params)
+    for item in filters:
+        if item.parameter not in resolved_params or resolved_params[item.parameter] is None:
+            continue
+        try:
+            normalized_params[item.parameter] = item.coerce_value(resolved_params[item.parameter])
+        except (ValidationError, ValueError, TypeError) as exc:
+            raise ValueError(
+                "Snapshot integrity validation failed: the schedule's resolved parameter "
+                f":{item.parameter} cannot be coerced to {item.param_type}."
+            ) from exc
+
+    matching_rows = filter_snapshot_rows(
+        rows=rows,
+        filters=filters,
+        request_params=normalized_params,
+    )
+    invalid_row_count = len(rows) - len(matching_rows)
+    if invalid_row_count:
+        columns = sorted({item.column for item in filters})
+        raise ValueError(
+            "Snapshot integrity validation failed: "
+            f"{invalid_row_count} of {len(rows)} cached rows do not match the schedule's "
+            f"resolved filter parameters for columns: {', '.join(columns)}."
+        )
