@@ -126,11 +126,12 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 68 | Cached data is served only after retained-run coverage and typed row filtering | Verified | `DataService._serve_snapshot()` selects the newest covering job run, validates mapped columns, and calls `filter_snapshot_rows()`; no unfiltered fallback exists |
 | 69 | Range and SQL `NULL` coverage semantics fail closed | Verified | Reversed bounds return 422; range types must match; `null_means_all` is limited to optional equality mappings |
 | 70 | Snapshot filter mappings cannot substitute for authorization | Verified | Data authentication runs before snapshot selection; `store_id` and other mapped values are ordinary row filters only |
+| 71 | SQL bind discovery has linear processing cost | Verified | A monotonic scanner masks quoted/commented regions before bind extraction; adversarial unterminated Q-quote input is regression-tested |
 
 ## Summary
 
-- **Verified items**: 64/70
-- **Action required**: 6/70
+- **Verified items**: 65/71
+- **Action required**: 6/71
 - **High-severity unresolved findings**: 0
 - **All code-level security controls validated through automated tests**
 

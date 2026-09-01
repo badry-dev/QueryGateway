@@ -8,6 +8,7 @@ Unit tests exercise schema validation, SQL safety, and bind parameter extraction
 
 import uuid
 from datetime import date
+from time import perf_counter
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -43,6 +44,11 @@ def test_extract_bind_params_ignores_strings() -> None:
     assert params == ["name"]
 
 
+def test_extract_bind_params_ignores_escaped_quotes_and_quoted_identifiers() -> None:
+    sql = "SELECT 'it''s :not_a_param', \"COLUMN:ALSO_NOT\" FROM t WHERE id = :id"
+    assert extract_bind_params(sql) == ["id"]
+
+
 def test_extract_bind_params_ignores_line_comments() -> None:
     sql = "SELECT * FROM t WHERE id = :id -- ignore :debug\nAND status = :status"
     assert extract_bind_params(sql) == ["id", "status"]
@@ -68,6 +74,27 @@ def test_extract_bind_params_ignores_block_comments() -> None:
 def test_extract_bind_params_ignores_oracle_alternative_quoted_literals(literal: str) -> None:
     sql = f"SELECT {literal} FROM dual WHERE id = :id"
     assert extract_bind_params(sql) == ["id"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT ':ignored",
+        'SELECT "column:ignored',
+        "SELECT /* :ignored",
+        "SELECT q'[unterminated :ignored",
+    ],
+)
+def test_extract_bind_params_masks_unterminated_non_code_regions(sql: str) -> None:
+    assert extract_bind_params(sql) == []
+
+
+def test_extract_bind_params_handles_adversarial_alt_quotes_in_linear_time() -> None:
+    sql = ("q'[" * 32_768) + "unterminated"
+    started_at = perf_counter()
+
+    assert extract_bind_params(sql) == []
+    assert perf_counter() - started_at < 0.5
 
 
 def test_extract_bind_params_empty() -> None:
