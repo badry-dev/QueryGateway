@@ -40,7 +40,7 @@ Comprehensive security validation for QueryGateway production deployments. All i
 | 22 | Template interpolation rejected (`${`, `{var}`) | Verified | Pattern included in safety validation |
 | 23 | SQL validation runs on both create and update | Verified | `EndpointCreate` and `EndpointUpdate` share the validator |
 | 24 | SQL preview also validates before execution | Verified | `SqlPreviewRequest` includes the same validator |
-| 25 | Parameters coerced through typed schemas before SQL execution | Verified | `build_param_model()` creates the Pydantic request model; `DataService` enforces required fields before binding |
+| 25 | Parameters coerced through typed schemas before SQL execution | Verified | `build_param_model()` creates the Pydantic request model; `DataService` and typed admin SQL preview validate values before binding |
 | 26 | SQLAlchemy `text()` with bind dict used for execution | Verified | `sql/executor.py` uses parameterized execution |
 
 ## Input Validation

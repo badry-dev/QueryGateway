@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from app.models.endpoint import ApiEndpoint, DataStrategy
@@ -13,6 +13,7 @@ from app.schemas.endpoint import EndpointCreate, ParamDescriptor
 from app.services.snapshot_filtering import (
     compile_snapshot_filters,
     validate_snapshot_parameter_ranges,
+    validate_snapshot_rows_match_resolved_parameters,
 )
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -129,6 +130,64 @@ def test_snapshot_range_validation_retains_duplicate_directional_bounds() -> Non
             filters=filters,
             request_params={"strict_start": 10, "loose_start": 5, "end": 7},
         )
+
+
+def test_snapshot_integrity_rejects_cached_dates_outside_resolved_window() -> None:
+    filters = compile_snapshot_filters(
+        {
+            "start_date": {
+                "type": "date",
+                "snapshot_filter": {"column": "DT", "operator": "gte"},
+            },
+            "end_date": {
+                "type": "date",
+                "snapshot_filter": {"column": "DT", "operator": "lte"},
+            },
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="1 of 1 cached rows do not match the schedule's resolved filter parameters",
+    ):
+        validate_snapshot_rows_match_resolved_parameters(
+            rows=[{"DT": "0026-08-24 00:00:00", "ORDER_COUNT": 0}],
+            filters=filters,
+            resolved_params={
+                "start_date": date(2026, 8, 24),
+                "end_date": date(2026, 8, 31),
+            },
+        )
+
+
+def test_snapshot_integrity_accepts_empty_and_in_window_results() -> None:
+    filters = compile_snapshot_filters(
+        {
+            "start_date": {
+                "type": "date",
+                "snapshot_filter": {"column": "DT", "operator": "gte"},
+            },
+            "end_date": {
+                "type": "date",
+                "snapshot_filter": {"column": "DT", "operator": "lte"},
+            },
+        }
+    )
+    resolved_params = {
+        "start_date": date(2026, 8, 24),
+        "end_date": date(2026, 8, 31),
+    }
+
+    validate_snapshot_rows_match_resolved_parameters(
+        rows=[],
+        filters=filters,
+        resolved_params=resolved_params,
+    )
+    validate_snapshot_rows_match_resolved_parameters(
+        rows=[{"DT": "2026-08-24 17:30:00", "ORDER_COUNT": 4}],
+        filters=filters,
+        resolved_params=resolved_params,
+    )
 
 
 async def _seed_snapshot_endpoint(
@@ -370,6 +429,40 @@ async def test_snapshot_returns_empty_data_for_no_matches_inside_coverage(
     assert response.status_code == 200
     assert response.json()["data"] == []
     assert response.json()["meta"]["row_count"] == 0
+
+
+@pytest.mark.integration
+async def test_snapshot_rejects_retained_rows_that_contradict_resolved_coverage(
+    async_client: object,
+    db_session: AsyncSession,
+) -> None:
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    path = await _seed_snapshot_endpoint(client, db_session)
+    endpoint = (
+        await db_session.execute(select(ApiEndpoint).where(ApiEndpoint.path == path))
+    ).scalar_one()
+    snapshot = (
+        await db_session.execute(select(Snapshot).where(Snapshot.endpoint_id == endpoint.id))
+    ).scalar_one()
+    snapshot.data = [{"business_date": "0026-08-20 00:00:00", "store_id": 2, "amount": 20}]
+    snapshot.row_count = 1
+    await db_session.flush()
+
+    with capture_logs() as logs:
+        response = await client.get(
+            f"/api/v1/data/{path}",
+            params={"start_date": "2026-08-20", "end_date": "2026-08-20"},
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "code": "snapshot_integrity_failed",
+        "detail": "No retained snapshot passed integrity validation.",
+    }
+    rejection = next(entry for entry in logs if entry.get("event") == "snapshot_integrity_failed")
+    assert rejection["status"] == 503
+    assert rejection["snapshot_ids"] == [str(snapshot.id)]
+    assert "1 of 1 cached rows do not match" in rejection["integrity_errors"][0]
 
 
 @pytest.mark.integration

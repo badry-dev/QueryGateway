@@ -35,6 +35,7 @@ from app.schemas.endpoint import (
 )
 from app.services.schedule_bindings import ScheduleBindingError, resolve_schedule_parameters
 from app.sql.executor import SqlExecutionError, execute_query
+from app.sql.param_models import build_param_model
 
 log = structlog.get_logger()
 
@@ -284,12 +285,30 @@ class EndpointService:
             raise ValueError("Connection is not active.")
 
         bind_params = extract_bind_params(payload.sql_text)
+        params: dict[str, object] = dict(payload.params)
+
+        if payload.param_schema:
+            try:
+                ParamModel = build_param_model(
+                    {
+                        name: descriptor.model_dump()
+                        for name, descriptor in payload.param_schema.items()
+                    },
+                    enforce_required=True,
+                )
+                params = ParamModel.model_validate(payload.params).model_dump()
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                field = ".".join(str(part) for part in first.get("loc", ())) or "?"
+                raise ValueError(
+                    f"Invalid value for preview parameter '{field}': {first.get('msg')}"
+                ) from exc
 
         try:
             columns, rows, duration_ms = await execute_query(
                 connection=conn,
                 sql=payload.sql_text,
-                params=dict(payload.params),
+                params=params,
                 max_rows=payload.max_rows,
             )
         except SqlExecutionError as exc:

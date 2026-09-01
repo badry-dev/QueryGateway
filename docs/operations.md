@@ -252,12 +252,22 @@ the next resolved logical dates and typed SQL values before saving a schedule.
      schedule bindings, window, timezone, and snapshot retention.
    - `snapshot_filter_column_unavailable` means a configured mapped column is absent from the
      non-empty cached payload.
+   - `snapshot_integrity_failed` means every covering retained snapshot contains mapped values
+     that contradict its persisted schedule parameters. Inspect the structured log's
+     `snapshot_ids` and `integrity_errors` fields.
    - A covered request with no matching business rows is successful and returns `data: []`.
    - No retained snapshot returns HTTP 503 rather than a coverage error.
 5. **Check snapshot staleness**: For snapshot endpoints, compare `snapshot_created_at`,
    `snapshot_row_count`, and the filtered `row_count` response metadata.
-6. **Check SQL syntax**: Use the SQL preview feature with temporary sample values. Ensure bind
-   placeholders are not enclosed in single quotes.
+6. **Check refresh integrity failures**: A scheduled result whose mapped values are malformed or
+   outside the resolved schedule bounds is marked failed and is not stored. Inspect the job's
+   `error_detail`, correct SQL that reconverts already typed binds (for example, unnecessary
+   `TO_DATE(:date_param, ...)` calls), and rerun the schedule. Previously retained valid snapshots
+   remain available.
+7. **Check SQL preview types**: Select the correct type beside every temporary sample value. The
+   backend converts preview samples through the endpoint parameter model before Oracle execution,
+   so a date bind reaches Oracle as a native date. Keep bind placeholders outside single quotes
+   and do not reconvert native date binds with `TO_DATE`.
 
 See [Endpoint, scheduler, and snapshot parameter contracts](scheduler_parameter_bindings.md) for
 the complete selection and coverage rules.

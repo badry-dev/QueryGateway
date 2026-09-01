@@ -37,6 +37,7 @@ describe("SqlStep preview parameters", () => {
         previewParams={{}}
         isPreviewing={false}
         onPreview={vi.fn()}
+        onUpdateParam={vi.fn()}
         onUpdatePreviewParam={vi.fn()}
       />,
     );
@@ -56,6 +57,7 @@ describe("SqlStep preview parameters", () => {
         previewParams={{}}
         isPreviewing={false}
         onPreview={onPreview}
+        onUpdateParam={vi.fn()}
         onUpdatePreviewParam={onUpdatePreviewParam}
       />,
     );
@@ -71,6 +73,7 @@ describe("SqlStep preview parameters", () => {
         previewParams={{ customer_id: "42" }}
         isPreviewing={false}
         onPreview={onPreview}
+        onUpdateParam={vi.fn()}
         onUpdatePreviewParam={onUpdatePreviewParam}
       />,
     );
@@ -95,6 +98,7 @@ describe("SqlStep preview parameters", () => {
         previewParams={{}}
         isPreviewing={false}
         onPreview={vi.fn()}
+        onUpdateParam={vi.fn()}
         onUpdatePreviewParam={vi.fn()}
       />,
     );
@@ -119,10 +123,53 @@ describe("SqlStep preview parameters", () => {
         previewParams={{}}
         isPreviewing={false}
         onPreview={vi.fn()}
+        onUpdateParam={vi.fn()}
         onUpdatePreviewParam={vi.fn()}
       />,
     );
 
     expect(screen.getByRole("button", { name: "Preview Query" })).toBeEnabled();
+  });
+
+  it("lets the author select a date type before the first preview", () => {
+    const onUpdateParam = vi.fn();
+    const state = makeState();
+    const { rerender } = render(
+      <SqlStep
+        state={state}
+        update={vi.fn()}
+        preview={null}
+        previewParams={{}}
+        isPreviewing={false}
+        onPreview={vi.fn()}
+        onUpdateParam={onUpdateParam}
+        onUpdatePreviewParam={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Preview type for customer_id"), {
+      target: { value: "date" },
+    });
+    expect(onUpdateParam).toHaveBeenCalledWith("customer_id", "type", "date");
+
+    state.param_schema.customer_id = {
+      type: "date",
+      required: true,
+      default: null,
+    };
+    rerender(
+      <SqlStep
+        state={state}
+        update={vi.fn()}
+        preview={null}
+        previewParams={{}}
+        isPreviewing={false}
+        onPreview={vi.fn()}
+        onUpdateParam={onUpdateParam}
+        onUpdatePreviewParam={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText(":customer_id")).toHaveAttribute("type", "date");
   });
 });

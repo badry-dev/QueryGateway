@@ -87,6 +87,13 @@ binding sources are fixed literal, explicit SQL `NULL` for an optional bind, log
 relative logical date, and inclusive window start/end. Supported windows are previous day, last N
 complete days, week to date, previous week, month to date, and previous month.
 
+After final output-column mapping and before persistence, each non-empty scheduled result must
+match its resolved schedule parameters under the endpoint's declared `eq`, `gte`, and `lte`
+snapshot filters. An inconsistent or unparseable result fails the job without replacing retained
+valid snapshots; the scheduler never guesses or rewrites source values. The data plane revalidates
+retained candidates, falls back to an older valid covering snapshot when possible, and returns an
+explicit HTTP 503 integrity error when none is usable.
+
 Each parameterized snapshot endpoint also declares an explicit final cached-output-column mapping
 and one whitelisted operator (`eq`, `gte`, or `lte`). The data plane validates required fields and
 types, rejects reversed ranges, selects the newest retained job snapshot whose persisted resolved

@@ -7,6 +7,9 @@ Unit tests exercise schema validation, SQL safety, and bind parameter extraction
 """
 
 import uuid
+from datetime import date
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from app.schemas.endpoint import (
@@ -303,9 +306,72 @@ def test_sql_preview_request_valid() -> None:
         connection_id=uuid.uuid4(),
         sql_text="SELECT * FROM employees WHERE dept_id = :dept_id",
         params={"dept_id": 10},
+        param_schema={"dept_id": {"type": "integer", "required": True}},
         max_rows=5,
     )
     assert payload.max_rows == 5
+    assert payload.param_schema["dept_id"].type == "integer"
+
+
+def test_sql_preview_request_rejects_typed_schema_mismatch() -> None:
+    with pytest.raises(ValueError, match="not declared in schema"):
+        SqlPreviewRequest(
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT * FROM employees WHERE hired_on >= :start_date",
+            params={"start_date": "2026-08-30"},
+            param_schema={"other_date": {"type": "date", "required": True}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_sql_preview_coerces_date_before_oracle_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.endpoint import EndpointService
+
+    connection = SimpleNamespace(is_active=True)
+    connection_repo = MagicMock()
+    connection_repo.get_by_id = AsyncMock(return_value=connection)
+    execute_query = AsyncMock(return_value=(["DT"], [], 1.0))
+    monkeypatch.setattr("app.services.endpoint.execute_query", execute_query)
+    service = EndpointService(repo=MagicMock(), conn_repo=connection_repo)
+
+    await service.preview_sql(
+        SqlPreviewRequest(
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT DT FROM orders WHERE DT >= :start_date",
+            params={"start_date": "30-08-2026"},
+            param_schema={"start_date": {"type": "date", "required": True}},
+        )
+    )
+
+    execute_query.assert_awaited_once()
+    assert execute_query.await_args.kwargs["params"] == {"start_date": date(2026, 8, 30)}
+
+
+@pytest.mark.asyncio
+async def test_sql_preview_rejects_invalid_typed_date_before_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.endpoint import EndpointService
+
+    connection_repo = MagicMock()
+    connection_repo.get_by_id = AsyncMock(return_value=SimpleNamespace(is_active=True))
+    execute_query = AsyncMock()
+    monkeypatch.setattr("app.services.endpoint.execute_query", execute_query)
+    service = EndpointService(repo=MagicMock(), conn_repo=connection_repo)
+
+    with pytest.raises(ValueError, match="Invalid value for preview parameter 'start_date'"):
+        await service.preview_sql(
+            SqlPreviewRequest(
+                connection_id=uuid.uuid4(),
+                sql_text="SELECT DT FROM orders WHERE DT >= :start_date",
+                params={"start_date": "not-a-date"},
+                param_schema={"start_date": {"type": "date", "required": True}},
+            )
+        )
+
+    execute_query.assert_not_awaited()
 
 
 # ── API integration tests (require PostgreSQL) ──────────────────────────────

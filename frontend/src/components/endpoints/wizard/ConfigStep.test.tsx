@@ -106,6 +106,9 @@ describe("ConfigStep snapshot scheduling guidance", () => {
     );
 
     expect(screen.getByText(/Snapshot request filters/i)).toBeInTheDocument();
+    expect(screen.getByText(/filters rows already stored in a snapshot/i)).toBeInTheDocument();
+    expect(screen.getByText(/From \/ minimum keeps rows on or after/i)).toBeInTheDocument();
+    expect(screen.getByText(/do not change what the schedule loads/i)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Snapshot column for start_date"), {
       target: { value: "business_date" },
     });
