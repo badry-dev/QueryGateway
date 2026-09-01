@@ -370,9 +370,12 @@ class DataService:
                 ):
                     continue
 
-                candidate_data: list[dict[str, object]] = (
-                    candidate.data if isinstance(candidate.data, list) else []
-                )
+                if not isinstance(candidate.data, list):
+                    integrity_failures.append(
+                        (str(candidate.id), "Snapshot payload is not a row array.")
+                    )
+                    continue
+                candidate_data = candidate.data
                 if unavailable_snapshot_filter_columns(rows=candidate_data, filters=filters):
                     # Preserve the existing configuration-error response below. An endpoint edit
                     # can invalidate mappings even when the stored snapshot itself was valid.

@@ -21,9 +21,10 @@ QueryGateway treats the same SQL bind name differently depending on where it is 
   `NULL`.
 - Date requests accept `YYYY-MM-DD` and `DD-MM-YYYY` and normalize to a Python `date` before
   binding. Boolean requests accept `true`, `false`, `1`, `0`, `yes`, or `no`.
-- In SQL preview, choose each bind's declared type before running the query. Preview sends the
-  temporary values and typed schema together; the backend validates and converts them through the
-  same parameter model used by published endpoints before Oracle execution.
+- In SQL preview, choose each bind's declared type before running the query. A preview query that
+  contains binds is rejected unless its typed schema describes every detected bind exactly. The
+  backend then validates and converts the temporary values through the same parameter model used
+  by published endpoints before Oracle execution.
 - Preview sample values are request-local and never become endpoint defaults or schedule bindings.
   Keep native date binds such as `:start_date` in SQL; do not wrap an already typed date bind in
   `TO_DATE(...)`.

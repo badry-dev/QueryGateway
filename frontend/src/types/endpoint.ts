@@ -75,7 +75,7 @@ export interface SqlPreviewRequest {
   connection_id: string;
   sql_text: string;
   params?: Record<string, string | number | boolean | null>;
-  param_schema?: Record<string, ParamDescriptor>;
+  param_schema: Record<string, ParamDescriptor>;
   max_rows?: number;
 }
 

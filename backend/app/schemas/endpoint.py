@@ -391,8 +391,8 @@ class SqlPreviewRequest(BaseModel):
     param_schema: dict[str, ParamDescriptor] = Field(
         default_factory=dict,
         description=(
-            "Optional typed descriptors for preview bind parameters. When supplied, the schema "
-            "must match the SQL bind names and values are coerced before Oracle execution."
+            "Typed descriptors for preview bind parameters. Bind-bearing SQL requires an exact "
+            "schema match so values can be coerced before Oracle execution."
         ),
     )
     max_rows: int = Field(10, ge=1, le=100)
@@ -407,13 +407,15 @@ class SqlPreviewRequest(BaseModel):
 
     @model_validator(mode="after")
     def typed_schema_matches_bind_params(self) -> Self:
-        # ``param_schema`` is additive for compatibility with existing admin
-        # API clients. New callers should always send it when SQL has binds so
-        # preview uses the same typed-value contract as published endpoints.
+        sql_params = set(extract_bind_params(self.sql_text))
         if not self.param_schema:
+            if sql_params:
+                raise ValueError(
+                    "SQL preview bind parameters require typed schema descriptors for: "
+                    f"{sorted(sql_params)}"
+                )
             return self
 
-        sql_params = set(extract_bind_params(self.sql_text))
         schema_params = set(self.param_schema)
         undeclared = sql_params - schema_params
         unused = schema_params - sql_params

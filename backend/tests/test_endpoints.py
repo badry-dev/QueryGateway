@@ -323,6 +323,23 @@ def test_sql_preview_request_rejects_typed_schema_mismatch() -> None:
         )
 
 
+def test_sql_preview_request_requires_typed_schema_for_binds() -> None:
+    with pytest.raises(ValueError, match="require typed schema descriptors"):
+        SqlPreviewRequest(
+            connection_id=uuid.uuid4(),
+            sql_text="SELECT * FROM employees WHERE hired_on >= :start_date",
+            params={"start_date": "2026-08-30"},
+        )
+
+
+def test_sql_preview_request_allows_no_schema_without_binds() -> None:
+    payload = SqlPreviewRequest(
+        connection_id=uuid.uuid4(),
+        sql_text="SELECT 1 FROM dual",
+    )
+    assert payload.param_schema == {}
+
+
 @pytest.mark.asyncio
 async def test_sql_preview_coerces_date_before_oracle_execution(
     monkeypatch: pytest.MonkeyPatch,

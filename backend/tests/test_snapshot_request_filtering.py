@@ -16,7 +16,7 @@ from app.services.snapshot_filtering import (
     validate_snapshot_rows_match_resolved_parameters,
 )
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog.testing import capture_logs
 
@@ -463,6 +463,37 @@ async def test_snapshot_rejects_retained_rows_that_contradict_resolved_coverage(
     assert rejection["status"] == 503
     assert rejection["snapshot_ids"] == [str(snapshot.id)]
     assert "1 of 1 cached rows do not match" in rejection["integrity_errors"][0]
+
+
+@pytest.mark.integration
+async def test_snapshot_rejects_retained_non_array_payload(
+    async_client: object,
+    db_session: AsyncSession,
+) -> None:
+    client: AsyncClient = async_client  # type: ignore[assignment]
+    path = await _seed_snapshot_endpoint(client, db_session)
+    endpoint = (
+        await db_session.execute(select(ApiEndpoint).where(ApiEndpoint.path == path))
+    ).scalar_one()
+    snapshot = (
+        await db_session.execute(select(Snapshot).where(Snapshot.endpoint_id == endpoint.id))
+    ).scalar_one()
+    await db_session.execute(
+        update(Snapshot).where(Snapshot.id == snapshot.id).values(data={"unexpected": "object"})
+    )
+    await db_session.flush()
+
+    with capture_logs() as logs:
+        response = await client.get(
+            f"/api/v1/data/{path}",
+            params={"start_date": "2026-08-20", "end_date": "2026-08-20"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["code"] == "snapshot_integrity_failed"
+    rejection = next(entry for entry in logs if entry.get("event") == "snapshot_integrity_failed")
+    assert rejection["snapshot_ids"] == [str(snapshot.id)]
+    assert rejection["integrity_errors"] == ["Snapshot payload is not a row array."]
 
 
 @pytest.mark.integration
